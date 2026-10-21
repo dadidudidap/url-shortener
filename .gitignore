@@ -1,0 +1,23 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Go build output
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.dylib
+*.test
+*.out
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store

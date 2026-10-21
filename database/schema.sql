@@ -1,0 +1,6 @@
+CREATE TABLE urls (
+    short_code VARCHAR(10) PRIMARY KEY,
+    long_url TEXT NOT NULL,
+    clicks INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

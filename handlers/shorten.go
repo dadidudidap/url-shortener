@@ -5,6 +5,8 @@ import (
 	"log"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/dadidudidap/url-shortener/database"
 	"github.com/dadidudidap/url-shortener/database/db" // sqlc generated package
@@ -32,10 +34,16 @@ func ShortenHandler(w http.ResponseWriter, r *http.Request) {
 	shortCode := generateShortCode()
 	queries := db.New(database.Pool)
 
+	longURL, ok := normalizeURL(req.LongURL)
+	if !ok {
+		http.Error(w, "Invalid URL", http.StatusBadRequest)
+		return
+	}
+
 	// sqlc generates CreateURLParams so you never pass the wrong types
 	err := queries.CreateURL(r.Context(), db.CreateURLParams{
 		ShortCode: shortCode,
-		LongUrl:   req.LongURL,
+		LongUrl:   longURL,
 	})
 
 	if err != nil {
@@ -46,6 +54,34 @@ func ShortenHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"short_url": "http://localhost:8000/" + shortCode,
+		"short_url": baseURL(r) + "/" + shortCode,
 	})
+}
+
+// normalizeURL accepts links with or without a scheme and defaults to https.
+func normalizeURL(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", false
+	}
+
+	candidate := raw
+	if !strings.Contains(raw, "://") {
+		candidate = "https://" + raw
+	}
+
+	parsed, err := url.ParseRequestURI(candidate)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || len(candidate) > 2048 {
+		return "", false
+	}
+	return candidate, true
+}
+
+// baseURL uses the request host so links work on any deployment.
+func baseURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
 }

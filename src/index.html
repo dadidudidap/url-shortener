@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A small URL shortener with click stats and QR codes.">
+<title>URL shortener</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/styles.css">
+<script src="/app.js"></script>
+</head>
+<body>
+<div class="shell">
+  <header class="top">
+    <p class="wordmark">URL shortener</p>
+    <button type="button" class="ghost" id="theme-toggle">Dark</button>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h1>Long links, cut short.</h1>
+      <p>Paste a URL and get a six-character link. Every visit is counted, and every link has a QR code.</p>
+    </section>
+
+    <section class="tool" aria-labelledby="shorten-title">
+      <h2 id="shorten-title">Shorten a link</h2>
+      <form id="shorten-form" novalidate>
+        <label for="long-url">Long URL</label>
+        <div class="field">
+          <input id="long-url" name="long_url" type="text" inputmode="url" autocomplete="url" autocapitalize="none" spellcheck="false" placeholder="example.com/a/long/path" required>
+          <button type="submit" class="action" id="shorten-submit">
+            <span>Shorten</span>
+            <span class="spinner" aria-hidden="true"></span>
+          </button>
+        </div>
+        <p class="status" id="shorten-status" role="status" aria-live="polite"></p>
+      </form>
+
+      <div class="reveal" id="shorten-result" hidden>
+        <div class="reveal-inner">
+          <div class="result">
+            <p class="result-label">Short link</p>
+            <div class="link-row">
+              <a id="short-link" href="#" target="_blank" rel="noopener noreferrer"></a>
+              <button type="button" class="ghost" id="copy-button">Copy</button>
+            </div>
+            <p class="status" id="copy-status" role="status" aria-live="polite"></p>
+            <div class="qr-row">
+              <img id="short-qr" class="qr" width="112" height="112" alt="">
+              <p class="hint">Scan to open.<br>Opens in a new tab.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tool tool-separated" aria-labelledby="stats-title">
+      <h2 id="stats-title">Link stats</h2>
+      <form id="stats-form" novalidate>
+        <label for="stats-code">Short code or short link</label>
+        <div class="field">
+          <input id="stats-code" name="code" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="abc123" required aria-describedby="stats-hint">
+          <button type="submit" class="action" id="stats-submit">
+            <span>Check clicks</span>
+            <span class="spinner" aria-hidden="true"></span>
+          </button>
+        </div>
+        <p class="hint" id="stats-hint">Paste the whole short link, or just its six characters.</p>
+        <p class="status" id="stats-status" role="status" aria-live="polite"></p>
+      </form>
+
+      <p class="empty" id="stats-empty">No link checked yet. Create one above, then watch its clicks here.</p>
+
+      <div class="reveal" id="stats-result" hidden>
+        <div class="reveal-inner">
+          <dl class="stats">
+            <div>
+              <dt>Destination</dt>
+              <dd><a id="stats-url"></a></dd>
+            </div>
+            <div>
+              <dt>Clicks</dt>
+              <dd id="stats-clicks"></dd>
+            </div>
+            <div>
+              <dt>Created</dt>
+              <dd id="stats-created"></dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>Built with Go, Postgres, Redis, and RabbitMQ. Redirects are cached for 24 hours.</footer>
+</div>
+</body>
+</html>

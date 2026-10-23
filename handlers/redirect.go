@@ -52,8 +52,8 @@ func RedirectHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Asynchronously track the click
-	trackClick(shortCode)
+	// Queue the click; publish failures are logged and never block the redirect.
+	publishClick(shortCode)
 
 	http.Redirect(w, r, longURL, http.StatusFound)
 }

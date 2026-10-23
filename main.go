@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -31,19 +32,35 @@ func main() {
 
 	database.InitRedis()
 
+	// Analytics is optional at startup: if RabbitMQ is down both workers keep retrying.
+	rabbitURL := database.RabbitURL()
+	database.Rabbit = database.NewRabbitPublisher(rabbitURL)
+
+	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		database.Rabbit.Run(appCtx)
+	}()
+	go func() {
+		defer workers.Done()
+		handlers.StartClickWorker(appCtx, rabbitURL)
+	}()
+
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8000" // Default port if not specified
+		port = "8000"
 	} else if _, err := strconv.Atoi(port); err != nil {
 		log.Fatal("Invalid PORT environment variable")
 	}
-	
+
 	server := &http.Server{
 		Addr:    ":" + port,
 		Handler: routes.RegisterRoutes(),
 	}
-
-	go handlers.StartClickWorker()
 
 	go func() {
 		log.Println("Starting server on http://127.0.0.1:" + port)
@@ -52,15 +69,15 @@ func main() {
 		}
 	}()
 
-	// Shutdown on SIGINT/SIGTERM
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	<-stop
+	<-appCtx.Done()
 	log.Println("Shutting down server...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := server.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Println("Shutdown error:", err)
 	}
+
+	workers.Wait()
+	database.Rabbit.Close()
 }

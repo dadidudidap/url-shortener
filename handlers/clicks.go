@@ -2,14 +2,17 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/dadidudidap/url-shortener/database"
 	"github.com/dadidudidap/url-shortener/database/db"
+	"github.com/dadidudidap/url-shortener/ws"
 )
 
 const (
@@ -68,14 +71,19 @@ func handleClick(ctx context.Context, queries *db.Queries, d amqp.Delivery) erro
 	shortCode := string(d.Body)
 
 	dbCtx, cancel := context.WithTimeout(ctx, clickWriteTimeout)
-	err := queries.IncrementClicks(dbCtx, shortCode)
-	cancel()
+	defer cancel()
+
+	clicks, err := queries.IncrementClicks(dbCtx, shortCode)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The link was deleted after the redirect; retrying cannot succeed.
+		log.Printf("Dropping click for removed code %s", shortCode)
+		return d.Ack(false)
+	}
 
 	if err != nil {
 		log.Printf("Click worker failed to increment %s: %v", shortCode, err)
 
-		// Keep the message unacked while backing off; an immediate Nack would hot-loop
-		// against a database that is still down.
 		select {
 		case <-ctx.Done():
 			_ = d.Nack(false, true)
@@ -88,6 +96,8 @@ func handleClick(ctx context.Context, queries *db.Queries, d amqp.Delivery) erro
 		}
 		return nil
 	}
+
+	ws.Manager.Broadcast(shortCode, clicks)
 
 	if err := d.Ack(false); err != nil {
 		return fmt.Errorf("ack click %q: %w", shortCode, err)

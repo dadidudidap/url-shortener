@@ -1,12 +1,12 @@
 # URL Shortener
 
-A small URL shortener written in Go. Short links redirect through Postgres, reads are cached in Redis, clicks are counted in the background, and the frontend supports link creation, click stats, and QR codes.
+A small URL shortener written in Go. Short links redirect through Postgres, reads are cached in Redis, clicks are counted in the background, and the frontend supports link creation, click stats with live updates, and QR codes.
 
 ## Features
 
 - Create a short link from a full URL or a bare domain
 - Redirect with a `302` and count each visit
-- Click stats per short code
+- Click stats per short code, with live updates over WebSocket while the panel is open
 - PNG QR code for every short link
 - Redis cache in front of Postgres
 - Rate limit of 5 shorten requests per minute per IP
@@ -87,6 +87,7 @@ The app reads `.env` from the working directory when it exists. On a server, set
 | `POST` | `/api/shorten` | Create a short link. Rate limited. |
 | `GET` | `/api/stats/{code}` | Click stats for a short code |
 | `GET` | `/api/qr/{code}` | 256x256 PNG QR code |
+| `GET` | `/api/ws/{code}` | Live click count over WebSocket |
 | `GET` | `/{code}` | Redirect to the long URL |
 
 Create a link. The scheme is optional and defaults to `https`:
@@ -125,11 +126,29 @@ curl -i http://localhost:8000/abc123
 
 Only `http` and `https` URLs are accepted, and the normalized URL is limited to 2048 characters. A missing scheme becomes `https://`. When the limit is exceeded on `/api/shorten`, the API returns `429` and asks the caller to wait a minute.
 
+### Live clicks
+
+`/api/ws/{code}` sends one JSON message per counted click:
+
+```json
+{"short_code":"abc123","clicks":7}
+```
+
+It carries updates only. Fetch `/api/stats/{code}` once for the current value, then keep the socket open:
+
+```js
+const socket = new WebSocket("ws://localhost:8000/api/ws/abc123");
+socket.onmessage = (event) => console.log(JSON.parse(event.data));
+```
+
+The upgrade is accepted only when the `Origin` host matches the request `Host`. The server pings every 45 seconds and drops a viewer that stops answering, and a slow write is abandoned after 5 seconds so a dead tab cannot delay click counting. The bundled frontend opens the socket only while a code's stats are on screen, reconnects after 2 seconds if it drops, and closes it when the tab is hidden.
+
 ## How it works
 
 - `POST /api/shorten` validates the URL and stores a generated 6-character code in Postgres.
 - `GET /{code}` checks Redis first, falls back to Postgres on a miss, then caches the result for 24 hours.
 - The click is published to the durable `clicks_queue`. A background consumer writes it to Postgres and acks the message. Publish failures are logged and do not block the redirect.
+- The worker increments the count in one statement and broadcasts the returned value to viewers of that short code over `/api/ws/{code}`.
 - If Redis is unavailable, the rate limiter fails open and redirects still use Postgres.
 
 ## Project layout
@@ -137,8 +156,9 @@ Only `http` and `https` URLs are accepted, and the normalized URL is limited to 
 ```
 main.go                 startup, HTTP server, graceful shutdown
 routes/routes.go        route wiring
-handlers/               shorten, redirect, stats, QR, click consumer
+handlers/               shorten, redirect, stats, QR, click consumer, live stats handler
 middleware/             Redis rate limiting
+ws/                     WebSocket hub: per-code fan-out, ping/pong, origin check
 src/                    index.html, styles.css, and app.js, served as static files
 database/               Postgres, Redis, and RabbitMQ setup, schema, queries
 database/db/            sqlc-generated code, do not edit by hand
@@ -153,7 +173,13 @@ go vet ./...
 go build -o url-shortener .
 ```
 
-The tests cover URL normalization, the QR route, and the frontend route. The RabbitMQ integration test skips unless `RABBITMQ_URL` is set:
+The tests cover URL normalization, the QR route, the frontend route, and the WebSocket hub. The hub tests open real sockets through `httptest`, so run them with the race detector after touching `ws/`:
+
+```bash
+go test -race ./ws
+```
+
+The RabbitMQ integration test skips unless `RABBITMQ_URL` is set:
 
 ```bash
 RABBITMQ_URL=amqp://app:app@localhost:5672/ go test ./database
@@ -173,5 +199,6 @@ sqlc generate
 - The publisher and consumer reconnect every 5 seconds if RabbitMQ is unavailable.
 - The Compose credentials are for local development only.
 - The frontend is served from `src/` relative to the working directory, so run the app from the project root.
+- WebSocket upgrades accept only the same origin as the request host, so a proxy that rewrites `Host` also breaks live stats. The hub lives in process memory: viewers see updates from the replica that counted the click, which is the only replica in the Compose setup.
 - Short links and QR codes use the request host, so run behind a proxy that preserves `Host` and sets `X-Forwarded-Proto`.
 - There is no authentication. Anyone who can reach the API can create links.

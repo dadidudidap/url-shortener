@@ -16,6 +16,7 @@ import (
 	"github.com/dadidudidap/url-shortener/database"
 	"github.com/dadidudidap/url-shortener/handlers"
 	"github.com/dadidudidap/url-shortener/routes"
+	"github.com/dadidudidap/url-shortener/ws"
 )
 
 func main() {
@@ -77,6 +78,8 @@ func main() {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Println("Shutdown error:", err)
 	}
+	// Shutdown ignores upgraded connections, so close viewers explicitly.
+	ws.Manager.CloseAll()
 
 	workers.Wait()
 	database.Rabbit.Close()

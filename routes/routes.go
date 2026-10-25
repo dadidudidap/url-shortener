@@ -16,6 +16,7 @@ func RegisterRoutes() http.Handler {
 		r.With(middleware.RateLimit).Post("/shorten", handlers.ShortenHandler)
 		r.Get("/stats/{code}", handlers.GetStatsHandler)
 		r.Get("/qr/{code}", handlers.QRHandler)
+		r.Get("/ws/{code}", handlers.LiveStatsHandler)
 	})
 	// Only six-character codes reach the redirect handler, so asset paths
 	// such as /styles.css fall through to the static file server below.

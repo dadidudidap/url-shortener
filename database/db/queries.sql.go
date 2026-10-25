@@ -50,11 +50,13 @@ func (q *Queries) GetURLStats(ctx context.Context, shortCode string) (Url, error
 	return i, err
 }
 
-const incrementClicks = `-- name: IncrementClicks :exec
-UPDATE urls SET clicks = clicks + 1 WHERE short_code = $1
+const incrementClicks = `-- name: IncrementClicks :one
+UPDATE urls SET clicks = clicks + 1 WHERE short_code = $1 RETURNING clicks
 `
 
-func (q *Queries) IncrementClicks(ctx context.Context, shortCode string) error {
-	_, err := q.db.Exec(ctx, incrementClicks, shortCode)
-	return err
+func (q *Queries) IncrementClicks(ctx context.Context, shortCode string) (int32, error) {
+	row := q.db.QueryRow(ctx, incrementClicks, shortCode)
+	var clicks int32
+	err := row.Scan(&clicks)
+	return clicks, err
 }

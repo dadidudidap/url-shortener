@@ -36,6 +36,10 @@
 
     var copyTimer = null;
     var statsRequest = 0;
+    var displayedCode = "";
+    var liveSocket = null;
+    var liveCode = "";
+    var liveRetry = null;
 
     function applyTheme(theme) {
       root.dataset.theme = theme;
@@ -148,8 +152,64 @@
       if (!copied) throw new Error("Copy failed");
     }
 
+    function closeLive() {
+      window.clearTimeout(liveRetry);
+      liveRetry = null;
+      liveCode = "";
+      if (liveSocket) {
+        liveSocket.onmessage = null;
+        liveSocket.onclose = null;
+        liveSocket.close();
+        liveSocket = null;
+      }
+    }
+
+    function openLive() {
+      var code = liveCode;
+      if (!code) return;
+
+      var socket;
+      try {
+        socket = new WebSocket(liveURL(code));
+      } catch (error) {
+        liveRetry = window.setTimeout(openLive, 2000);
+        return;
+      }
+      liveSocket = socket;
+
+      socket.onmessage = function (event) {
+        if (liveCode !== code) return;
+        var data;
+        try { data = JSON.parse(event.data); } catch (error) { return; }
+        if (!data || data.short_code !== code) return;
+        var clicks = Number(data.clicks);
+        // A message already in flight can be older than the HTTP snapshot; never count backwards.
+        if (!Number.isFinite(clicks) || clicks < Number(statsClicks.textContent || 0)) return;
+        statsClicks.textContent = String(clicks);
+      };
+
+      socket.onclose = function () {
+        if (liveSocket === socket) liveSocket = null;
+        if (liveCode !== code || document.hidden) return;
+        liveRetry = window.setTimeout(openLive, 2000);
+      };
+    }
+
+    function connectLive(code) {
+      if (!("WebSocket" in window)) return;
+      closeLive();
+      liveCode = code;
+      openLive();
+    }
+
+    function liveURL(code) {
+      var scheme = window.location.protocol === "https:" ? "wss://" : "ws://";
+      return scheme + window.location.host + "/api/ws/" + encodeURIComponent(code);
+    }
+
     async function loadStats(code, quiet) {
       var requestID = ++statsRequest;
+      closeLive();
       statsEmpty.hidden = true;
       statsResult.classList.add("is-loading");
       setBusy(statsSubmit, true);
@@ -170,8 +230,11 @@
         statsResult.classList.remove("is-loading");
         openReveal(statsResult);
         setStatus(statsStatus, "", false);
+        displayedCode = code;
+        connectLive(code);
       } catch (error) {
         if (requestID !== statsRequest) return;
+        displayedCode = "";
         statsResult.classList.remove("is-loading");
         closeReveal(statsResult);
         if (error.status === 404) {
@@ -258,6 +321,15 @@
     });
 
     applyTheme(root.dataset.theme === "dark" ? "dark" : "light");
+
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) {
+        closeLive();
+      } else if (displayedCode) {
+        connectLive(displayedCode);
+      }
+    });
+    window.addEventListener("pagehide", closeLive);
   }
 
   if (document.readyState === "loading") {

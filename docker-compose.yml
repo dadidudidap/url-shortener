@@ -1,0 +1,65 @@
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: database/Dockerfile
+    env_file: .env
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      # Local development credentials; change these for anything shared.
+      RABBITMQ_DEFAULT_USER: app
+      RABBITMQ_DEFAULT_PASS: app
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    env_file: .env
+    ports:
+      - "${PORT:-8000}:${PORT:-8000}"
+    environment:
+      # Container-to-container hosts, not localhost.
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - REDIS_URL=redis:6379
+      - RABBITMQ_URL=amqp://app:app@rabbitmq:5672/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  rabbitmq-data:

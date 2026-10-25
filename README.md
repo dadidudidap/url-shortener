@@ -19,6 +19,7 @@ A small URL shortener written in Go. Short links redirect through Postgres, read
 - PostgreSQL
 - Redis
 - RabbitMQ (Docker Compose file included)
+- Docker Compose (optional, for the full stack)
 - [sqlc](https://sqlc.dev) only if you change the schema or queries
 
 ## Setup
@@ -30,15 +31,15 @@ cd url-shortener
 cp .env.example .env
 ```
 
-Start RabbitMQ with the included Compose file:
+Start RabbitMQ only:
 
 ```bash
-docker compose up -d
+docker compose up -d rabbitmq
 ```
 
 The management UI is at <http://localhost:15672> (`app` / `app`). If port 5672 is already in use, stop the existing broker or point `RABBITMQ_URL` at it.
 
-Edit `.env` so `DATABASE_URL` points at your Postgres instance. Then create the database and apply the schema:
+Edit `.env` with your Postgres user, password, database, host, and port. The app builds the connection URL from them. Then create the database and apply the schema:
 
 ```bash
 createdb url_db
@@ -53,12 +54,27 @@ go run .
 
 Open <http://localhost:8000>.
 
+### Run everything in Docker
+
+The Compose file starts the API, Postgres, Redis, and RabbitMQ together. Edit `.env` first, then:
+
+```bash
+docker compose up --build
+```
+
+Open <http://localhost:8000>. Postgres is published on host port 5433 and Redis on 6380 so they do not collide with local services. The schema is applied when the database volume is first created; after changing `database/schema.sql`, run `docker compose down -v` and start again.
+
 ## Configuration
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
 | `PORT` | no | `8000` | Must be numeric |
-| `DATABASE_URL` | yes | none | Postgres connection string used by `pgxpool` |
+| `DATABASE_URL` | no | built from the parts below | Full connection string; wins over the parts |
+| `POSTGRES_USER` | yes, unless `DATABASE_URL` is set | none | Postgres user |
+| `POSTGRES_PASSWORD` | yes, unless `DATABASE_URL` is set | none | Postgres password |
+| `POSTGRES_DB` | yes, unless `DATABASE_URL` is set | none | Postgres database name |
+| `DB_HOST` | yes, unless `DATABASE_URL` is set | none | Postgres host |
+| `DB_PORT` | yes, unless `DATABASE_URL` is set | none | Postgres port |
 | `REDIS_URL` | no | `localhost:6379` | Redis address as `host:port`, not a URL |
 | `RABBITMQ_URL` | no | `amqp://guest:guest@localhost:5672/` | AMQP URL; `.env.example` uses the Compose `app` user |
 

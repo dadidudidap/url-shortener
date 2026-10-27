@@ -12,7 +12,6 @@ import (
 
 	"github.com/dadidudidap/url-shortener/database"
 	"github.com/dadidudidap/url-shortener/database/db"
-	"github.com/dadidudidap/url-shortener/ws"
 )
 
 const (
@@ -97,7 +96,10 @@ func handleClick(ctx context.Context, queries *db.Queries, d amqp.Delivery) erro
 		return nil
 	}
 
-	ws.Manager.Broadcast(shortCode, clicks)
+	msg := fmt.Sprintf("%s:%d", shortCode, clicks)
+	if err := database.RedisClient.Publish(context.Background(), "ws_broadcasts", msg).Err(); err != nil {
+		log.Printf("Warning: failed to publish live stats for %s: %v", shortCode, err)
+	}
 
 	if err := d.Ack(false); err != nil {
 		return fmt.Errorf("ack click %q: %w", shortCode, err)

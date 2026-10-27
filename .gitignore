@@ -6,16 +6,14 @@
 # Go build output
 /bin/
 /dist/
+url-worker
+/url-shortener
 *.exe
 *.exe~
 *.dll
 *.dylib
 *.test
 *.out
-
-# Go workspace files
-go.work
-go.work.sum
 
 # Editor and OS files
 .idea/

@@ -14,7 +14,6 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/dadidudidap/url-shortener/database"
-	"github.com/dadidudidap/url-shortener/handlers"
 	"github.com/dadidudidap/url-shortener/routes"
 	"github.com/dadidudidap/url-shortener/ws"
 )
@@ -32,6 +31,7 @@ func main() {
 	}
 
 	database.InitRedis()
+	go ws.Manager.ListenRedis()
 
 	// Analytics is optional at startup: if RabbitMQ is down both workers keep retrying.
 	rabbitURL := database.RabbitURL()
@@ -41,14 +41,10 @@ func main() {
 	defer stop()
 
 	var workers sync.WaitGroup
-	workers.Add(2)
+	workers.Add(1)
 	go func() {
 		defer workers.Done()
 		database.Rabbit.Run(appCtx)
-	}()
-	go func() {
-		defer workers.Done()
-		handlers.StartClickWorker(appCtx, rabbitURL)
 	}()
 
 	port := os.Getenv("PORT")

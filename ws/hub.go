@@ -1,21 +1,26 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/dadidudidap/url-shortener/database"
 )
 
 const (
 	writeWait  = 5 * time.Second
 	pongWait   = 60 * time.Second
 	pingPeriod = 45 * time.Second
-	maxMessage = 1024             
+	maxMessage = 1024
 )
 
 var upgrader = websocket.Upgrader{
@@ -161,5 +166,25 @@ func (h *Hub) CloseAll() {
 	for _, c := range targets {
 		_ = c.write(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseGoingAway, ""))
 		c.conn.Close()
+	}
+}
+
+func (h *Hub) ListenRedis() {
+	pubsub := database.RedisClient.Subscribe(context.Background(), "ws_broadcasts")
+	defer pubsub.Close()
+
+	ch := pubsub.Channel()
+	log.Println("WebSocket Hub listening to Redis Pub/Sub...")
+
+	for msg := range ch {
+		// Split "abc123:50" into shortCode and clicks
+		parts := strings.Split(msg.Payload, ":")
+		if len(parts) == 2 {
+			shortCode := parts[0]
+			clicks, _ := strconv.Atoi(parts[1])
+
+			// Push the data to any connected browser!
+			h.Broadcast(shortCode, int32(clicks))
+		}
 	}
 }

@@ -1,12 +1,13 @@
 # URL Shortener
 
-A small URL shortener written in Go. Short links redirect through Postgres, reads are cached in Redis, clicks are counted in the background, and the frontend supports link creation, click stats with live updates, and QR codes.
+A small URL shortener written in Go. Short links redirect through Postgres, reads are cached in Redis, clicks are counted by a separate background worker, and the frontend supports link creation, click stats with live updates, and QR codes.
 
 ## Features
 
 - Create a short link from a full URL or a bare domain
 - Redirect with a `302` and count each visit
 - Click stats per short code, with live updates over WebSocket while the panel is open
+- Live counts reach every API replica through a Redis pub/sub channel
 - PNG QR code for every short link
 - Redis cache in front of Postgres
 - Rate limit of 5 shorten requests per minute per IP
@@ -21,6 +22,8 @@ A small URL shortener written in Go. Short links redirect through Postgres, read
 - RabbitMQ (Docker Compose file included)
 - Docker Compose (optional, for the full stack)
 - [sqlc](https://sqlc.dev) only if you change the schema or queries
+
+The repository is a Go workspace (`go.work`) with two modules: the API at the root and the click worker in `worker/`.
 
 ## Setup
 
@@ -46,17 +49,21 @@ createdb url_db
 psql "postgres://user:password@localhost:5432/url_db?sslmode=disable" -f database/schema.sql
 ```
 
-Run the app:
+Run the API and the click worker in two terminals:
 
 ```bash
 go run .
 ```
 
-Open <http://localhost:8000>.
+```bash
+go run ./worker
+```
+
+Open <http://localhost:8000>. The worker consumes the click queue. Without it, clicks stay queued and stats stop moving; redirects and the stats endpoint still work.
 
 ### Run everything in Docker
 
-The Compose file starts the API, Postgres, Redis, and RabbitMQ together. Edit `.env` first, then:
+The Compose file starts the API, the click worker, Postgres, Redis, and RabbitMQ together. Edit `.env` first, then:
 
 ```bash
 docker compose up --build
@@ -78,7 +85,7 @@ Open <http://localhost:8000>. Postgres is published on host port 5433 and Redis 
 | `REDIS_URL` | no | `localhost:6379` | Redis address as `host:port`, not a URL |
 | `RABBITMQ_URL` | no | `amqp://guest:guest@localhost:5672/` | AMQP URL; `.env.example` uses the Compose `app` user |
 
-The app reads `.env` from the working directory when it exists. On a server, set the variables in the environment instead.
+The app reads `.env` from the working directory when it exists. On a server, set the variables in the environment instead. The API and the worker read the same variables; the worker needs Postgres, Redis, and RabbitMQ.
 
 ## API
 
@@ -147,8 +154,8 @@ The upgrade is accepted only when the `Origin` host matches the request `Host`. 
 
 - `POST /api/shorten` validates the URL and stores a generated 6-character code in Postgres.
 - `GET /{code}` checks Redis first, falls back to Postgres on a miss, then caches the result for 24 hours.
-- The click is published to the durable `clicks_queue`. A background consumer writes it to Postgres and acks the message. Publish failures are logged and do not block the redirect.
-- The worker increments the count in one statement and broadcasts the returned value to viewers of that short code over `/api/ws/{code}`.
+- The click is published to the durable `clicks_queue`. The separate worker writes it to Postgres and acks the message. Publish failures are logged and do not block the redirect.
+- The worker increments the count in one statement, then publishes `code:clicks` on the `ws_broadcasts` Redis channel. Each API replica subscribes to that channel and fans the value out to viewers of that short code over `/api/ws/{code}`.
 - If Redis is unavailable, the rate limiter fails open and redirects still use Postgres.
 
 ## Project layout
@@ -156,12 +163,14 @@ The upgrade is accepted only when the `Origin` host matches the request `Host`. 
 ```
 main.go                 startup, HTTP server, graceful shutdown
 routes/routes.go        route wiring
-handlers/               shorten, redirect, stats, QR, click consumer, live stats handler
+handlers/               shorten, redirect, stats, QR, live stats handler, click consumer used by the worker
 middleware/             Redis rate limiting
-ws/                     WebSocket hub: per-code fan-out, ping/pong, origin check
+ws/                     WebSocket hub: per-code fan-out, ping/pong, origin check, Redis listener
 src/                    index.html, styles.css, and app.js, served as static files
+worker/                 click consumer as a separate module, started with `go run ./worker`
 database/               Postgres, Redis, and RabbitMQ setup, schema, queries
 database/db/            sqlc-generated code, do not edit by hand
+go.work                 workspace tying the API and worker modules together
 sqlc.yaml               sqlc configuration
 ```
 
@@ -172,6 +181,8 @@ go test ./...
 go vet ./...
 go build -o url-shortener .
 ```
+
+The root module covers the API; the worker is a separate module in the same workspace. Build it from the root with `go build ./worker`, or run its commands inside `worker/`.
 
 The tests cover URL normalization, the QR route, the frontend route, and the WebSocket hub. The hub tests open real sockets through `httptest`, so run them with the race detector after touching `ws/`:
 
@@ -196,9 +207,10 @@ sqlc generate
 - Redirects wait at most 50ms for click publishing, so a stuck broker cannot hold the response. Publish failures are logged and redirects still succeed.
 - The click consumer uses manual acknowledgements and processes one message at a time. Delivery is at-least-once: a crash after the Postgres update but before the ack can double count a click.
 - Publisher confirms are not enabled, so a successful publish means the frame was written, not that the broker persisted it. Clicks are analytics, not billing data.
-- The publisher and consumer reconnect every 5 seconds if RabbitMQ is unavailable.
+- The publisher and consumer reconnect every 5 seconds if RabbitMQ is unavailable. The worker exits at startup when Redis is unreachable.
+- A failed live update is logged and the click is still acked: the stored count stays correct, only the WebSocket push is missed.
 - The Compose credentials are for local development only.
 - The frontend is served from `src/` relative to the working directory, so run the app from the project root.
-- WebSocket upgrades accept only the same origin as the request host, so a proxy that rewrites `Host` also breaks live stats. The hub lives in process memory: viewers see updates from the replica that counted the click, which is the only replica in the Compose setup.
+- WebSocket upgrades accept only the same origin as the request host, so a proxy that rewrites `Host` also breaks live stats. The hub is per-process memory, but every API replica listens on the `ws_broadcasts` Redis channel, so a viewer gets updates whichever replica counted the click.
 - Short links and QR codes use the request host, so run behind a proxy that preserves `Host` and sets `X-Forwarded-Proto`.
 - There is no authentication. Anyone who can reach the API can create links.

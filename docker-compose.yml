@@ -47,7 +47,24 @@ services:
     ports:
       - "${PORT:-8000}:${PORT:-8000}"
     environment:
-      # Container-to-container hosts, not localhost.
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - REDIS_URL=redis:6379
+      - RABBITMQ_URL=amqp://app:app@rabbitmq:5672/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    env_file: .env
+    environment:
       - DB_HOST=postgres
       - DB_PORT=5432
       - REDIS_URL=redis:6379

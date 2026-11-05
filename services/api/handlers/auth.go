@@ -7,7 +7,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/dadidudidap/url-shortener/services/api/middleware"
 	"github.com/dadidudidap/url-shortener/shared/pb"
 )
 
@@ -86,10 +85,4 @@ func LoginHandler(client pb.AuthServiceClient) http.HandlerFunc {
 			"user":  userPayload{ID: resp.GetUser().GetId(), Email: resp.GetUser().GetEmail()},
 		})
 	}
-}
-
-// UserHandler answers a request already validated by middleware.Auth.
-func UserHandler(w http.ResponseWriter, r *http.Request) {
-	id, _ := middleware.UserID(r.Context())
-	writeJSON(w, http.StatusOK, map[string]int32{"id": id})
 }

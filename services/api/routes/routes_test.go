@@ -18,7 +18,6 @@ import (
 
 	"github.com/dadidudidap/url-shortener/shared/database"
 	"github.com/dadidudidap/url-shortener/shared/pb"
-	"github.com/dadidudidap/url-shortener/shared/token"
 )
 
 const testSecret = "test-secret"
@@ -184,36 +183,26 @@ func TestLoginEndpointGRPCError(t *testing.T) {
 	}
 }
 
-func TestProtectedRoute(t *testing.T) {
-	raw, err := token.Sign(testSecret, token.Claims{UserID: 7}, time.Hour)
-	if err != nil {
-		t.Fatalf("Sign() error: %v", err)
-	}
-
+func TestLinksRequiresToken(t *testing.T) {
 	tests := []struct {
 		name       string
 		authHeader string
-		want       int
 	}{
-		{name: "missing token", want: http.StatusUnauthorized},
-		{name: "invalid token", authHeader: "Bearer nope", want: http.StatusUnauthorized},
-		{name: "valid token", authHeader: "Bearer " + raw, want: http.StatusOK},
+		{name: "missing token"},
+		{name: "invalid token", authHeader: "Bearer nope"},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/api/protected", nil)
+			req := httptest.NewRequest("GET", "/api/links", nil)
 			if test.authHeader != "" {
 				req.Header.Set("Authorization", test.authHeader)
 			}
 			rec := httptest.NewRecorder()
 			RegisterRoutes(fakeAuth{}, testSecret).ServeHTTP(rec, req)
 
-			if rec.Code != test.want {
-				t.Fatalf("status = %d, want %d", rec.Code, test.want)
-			}
-			if test.want == http.StatusOK && !bytes.Contains(rec.Body.Bytes(), []byte("7")) {
-				t.Errorf("body = %q, want resolved user id", rec.Body.String())
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401", rec.Code)
 			}
 		})
 	}

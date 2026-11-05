@@ -89,17 +89,21 @@ Open <http://localhost:8000>. Postgres is published on host port 5433 and Redis 
 | `RABBITMQ_PORT` | no | `5672` | RabbitMQ port |
 | `AUTH_GRPC_HOST` | no | `localhost`, `0.0.0.0` in the auth service | Auth gRPC host |
 | `AUTH_GRPC_PORT` | no | `50051` | Auth gRPC port |
-| `AUTH_API_KEY` | yes | none | Key the auth service accepts. Unset rejects every key |
+| `JWT_SECRET` | yes | none | HMAC secret shared by the API and the auth service |
+| `JWT_TTL` | no | `24h` | Token lifetime, any `time.ParseDuration` value |
 
 All connection strings are built from these parts. There are no URL variables.
 
-The app reads `.env` from the working directory when it exists. On a server, set the variables in the environment instead. The API and the worker read the same variables; the worker needs Postgres, Redis, and RabbitMQ.
+The app reads `.env` from the working directory when it exists. On a server, set the variables in the environment instead. The API, the auth service, and the worker read the same file; the worker needs Postgres, Redis, and RabbitMQ, and the auth service needs Postgres plus `JWT_SECRET`.
 
 ## API
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/api/shorten` | Create a short link. Rate limited. |
+| `POST` | `/api/register` | Create an account with email and password |
+| `POST` | `/api/login` | Exchange credentials for a bearer token |
+| `GET` | `/api/links` | Links owned by the caller. Requires `Authorization: Bearer <token>` |
+| `POST` | `/api/shorten` | Create a short link. Rate limited. Optional bearer token sets the owner. |
 | `GET` | `/api/stats/{code}` | Click stats for a short code |
 | `GET` | `/api/qr/{code}` | 256x256 PNG QR code |
 | `GET` | `/api/ws/{code}` | Live click count over WebSocket |

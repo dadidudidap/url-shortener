@@ -59,8 +59,13 @@ services:
     environment:
       AUTH_GRPC_HOST: 0.0.0.0
       AUTH_GRPC_PORT: 50051
+      DB_HOST: postgres
+      DB_PORT: 5432
     ports:
       - "50051:50051"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   api:
     build:

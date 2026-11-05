@@ -18,6 +18,7 @@ func RegisterRoutes(authClient pb.AuthServiceClient, jwtSecret string) *chi.Mux 
 		r.Post("/register", handlers.RegisterHandler(authClient))
 		r.Post("/login", handlers.LoginHandler(authClient))
 		r.With(middleware.Auth(jwtSecret)).Get("/protected", handlers.UserHandler)
+		r.With(middleware.Auth(jwtSecret)).Get("/links", handlers.ListLinksHandler)
 		r.Get("/stats/{code}", handlers.GetStatsHandler)
 		r.Get("/qr/{code}", handlers.QRHandler)
 		r.Get("/ws/{code}", handlers.LiveStatsHandler)

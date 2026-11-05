@@ -6,17 +6,24 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/dadidudidap/url-shortener/shared/pb"
+	"github.com/dadidudidap/url-shortener/shared/token"
 )
+
+const testSecret = "test-secret"
 
 func TestRootServesFrontend(t *testing.T) {
 	t.Chdir("../../..")
 	rec := httptest.NewRecorder()
-	RegisterRoutes(nil).ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	RegisterRoutes(nil, testSecret).ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
 
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -43,7 +50,7 @@ func TestStaticAssets(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.path, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			RegisterRoutes(nil).ServeHTTP(rec, httptest.NewRequest("GET", test.path, nil))
+			RegisterRoutes(nil, testSecret).ServeHTTP(rec, httptest.NewRequest("GET", test.path, nil))
 
 			if rec.Code != 200 {
 				t.Fatalf("status = %d, want 200", rec.Code)
@@ -61,7 +68,7 @@ func TestStaticAssets(t *testing.T) {
 func TestStaticHandlerRejectsWrites(t *testing.T) {
 	t.Chdir("../../..")
 	rec := httptest.NewRecorder()
-	RegisterRoutes(nil).ServeHTTP(rec, httptest.NewRequest("POST", "/styles.css", nil))
+	RegisterRoutes(nil, testSecret).ServeHTTP(rec, httptest.NewRequest("POST", "/styles.css", nil))
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", rec.Code)
@@ -70,7 +77,7 @@ func TestStaticHandlerRejectsWrites(t *testing.T) {
 
 func TestQRRoute(t *testing.T) {
 	rec := httptest.NewRecorder()
-	RegisterRoutes(nil).ServeHTTP(rec, httptest.NewRequest("GET", "/api/qr/abc123", nil))
+	RegisterRoutes(nil, testSecret).ServeHTTP(rec, httptest.NewRequest("GET", "/api/qr/abc123", nil))
 
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -90,48 +97,107 @@ func TestQRRoute(t *testing.T) {
 
 func TestQRRouteRejectsBadCode(t *testing.T) {
 	rec := httptest.NewRecorder()
-	RegisterRoutes(nil).ServeHTTP(rec, httptest.NewRequest("GET", "/api/qr/nope", nil))
+	RegisterRoutes(nil, testSecret).ServeHTTP(rec, httptest.NewRequest("GET", "/api/qr/nope", nil))
 
 	if rec.Code != 404 {
 		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }
 
-type fakeAuth struct{ valid bool }
+type fakeAuth struct{ loginErr error }
 
-func (f fakeAuth) ValidateToken(context.Context, *pb.TokenRequest, ...grpc.CallOption) (*pb.TokenResponse, error) {
-	if !f.valid {
-		return &pb.TokenResponse{}, nil
+func (f fakeAuth) Register(_ context.Context, in *pb.RegisterRequest, _ ...grpc.CallOption) (*pb.UserResponse, error) {
+	return &pb.UserResponse{Id: 7, Email: in.GetEmail()}, nil
+}
+
+func (f fakeAuth) Login(_ context.Context, in *pb.LoginRequest, _ ...grpc.CallOption) (*pb.LoginResponse, error) {
+	if f.loginErr != nil {
+		return nil, f.loginErr
 	}
-	return &pb.TokenResponse{IsValid: true, UserId: "user_999"}, nil
+	return &pb.LoginResponse{
+		Token: "test-token",
+		User:  &pb.UserResponse{Id: 7, Email: in.GetEmail()},
+	}, nil
+}
+
+func TestRegisterEndpoint(t *testing.T) {
+	body := strings.NewReader(`{"email":"a@b.com","password":"secret123"}`)
+	rec := httptest.NewRecorder()
+	RegisterRoutes(fakeAuth{}, testSecret).ServeHTTP(rec, httptest.NewRequest("POST", "/api/register", body))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", rec.Code)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("a@b.com")) {
+		t.Errorf("body = %q, want the registered email", rec.Body.String())
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("password")) {
+		t.Errorf("body = %q, leaks password material", rec.Body.String())
+	}
+}
+
+func TestRegisterEndpointRejectsBadJSON(t *testing.T) {
+	rec := httptest.NewRecorder()
+	RegisterRoutes(fakeAuth{}, testSecret).ServeHTTP(rec, httptest.NewRequest("POST", "/api/register", strings.NewReader("{")))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestLoginEndpoint(t *testing.T) {
+	body := strings.NewReader(`{"email":"a@b.com","password":"secret123"}`)
+	rec := httptest.NewRecorder()
+	RegisterRoutes(fakeAuth{}, testSecret).ServeHTTP(rec, httptest.NewRequest("POST", "/api/login", body))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("test-token")) {
+		t.Errorf("body = %q, want the token", rec.Body.String())
+	}
+}
+
+func TestLoginEndpointGRPCError(t *testing.T) {
+	auth := fakeAuth{loginErr: status.Error(codes.Unavailable, "auth down")}
+	body := strings.NewReader(`{"email":"a@b.com","password":"secret123"}`)
+	rec := httptest.NewRecorder()
+	RegisterRoutes(auth, testSecret).ServeHTTP(rec, httptest.NewRequest("POST", "/api/login", body))
+
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502", rec.Code)
+	}
 }
 
 func TestProtectedRoute(t *testing.T) {
+	raw, err := token.Sign(testSecret, token.Claims{UserID: 7}, time.Hour)
+	if err != nil {
+		t.Fatalf("Sign() error: %v", err)
+	}
+
 	tests := []struct {
-		name    string
-		auth    pb.AuthServiceClient
-		apiKey  string
-		want    int
-		welcome bool
+		name       string
+		authHeader string
+		want       int
 	}{
-		{name: "missing key", auth: fakeAuth{valid: true}, want: http.StatusUnauthorized},
-		{name: "invalid key", auth: fakeAuth{}, apiKey: "nope", want: http.StatusUnauthorized},
-		{name: "valid key", auth: fakeAuth{valid: true}, apiKey: "ok", want: http.StatusOK, welcome: true},
+		{name: "missing token", want: http.StatusUnauthorized},
+		{name: "invalid token", authHeader: "Bearer nope", want: http.StatusUnauthorized},
+		{name: "valid token", authHeader: "Bearer " + raw, want: http.StatusOK},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "/api/protected", nil)
-			if test.apiKey != "" {
-				req.Header.Set("X-API-Key", test.apiKey)
+			if test.authHeader != "" {
+				req.Header.Set("Authorization", test.authHeader)
 			}
 			rec := httptest.NewRecorder()
-			RegisterRoutes(test.auth).ServeHTTP(rec, req)
+			RegisterRoutes(fakeAuth{}, testSecret).ServeHTTP(rec, req)
 
 			if rec.Code != test.want {
 				t.Fatalf("status = %d, want %d", rec.Code, test.want)
 			}
-			if test.welcome && !bytes.Contains(rec.Body.Bytes(), []byte("user_999")) {
+			if test.want == http.StatusOK && !bytes.Contains(rec.Body.Bytes(), []byte("7")) {
 				t.Errorf("body = %q, want resolved user id", rec.Body.String())
 			}
 		})

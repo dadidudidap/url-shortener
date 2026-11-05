@@ -10,12 +10,14 @@ import (
 	"github.com/dadidudidap/url-shortener/shared/pb"
 )
 
-func RegisterRoutes(authClient pb.AuthServiceClient) *chi.Mux {
+func RegisterRoutes(authClient pb.AuthServiceClient, jwtSecret string) *chi.Mux {
 	r := chi.NewRouter()
 
 	r.Route("/api", func(r chi.Router) {
 		r.With(middleware.RateLimit).Post("/shorten", handlers.ShortenHandler)
-		r.With(middleware.Auth(authClient)).Get("/protected", handlers.AuthHandler)
+		r.Post("/register", handlers.RegisterHandler(authClient))
+		r.Post("/login", handlers.LoginHandler(authClient))
+		r.With(middleware.Auth(jwtSecret)).Get("/protected", handlers.UserHandler)
 		r.Get("/stats/{code}", handlers.GetStatsHandler)
 		r.Get("/qr/{code}", handlers.QRHandler)
 		r.Get("/ws/{code}", handlers.LiveStatsHandler)

@@ -71,6 +71,11 @@ func main() {
 
 	authClient := pb.NewAuthServiceClient(grpcConn)
 
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET must be set")
+	}
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8000"
@@ -80,7 +85,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:    ":" + port,
-		Handler: routes.RegisterRoutes(authClient),
+		Handler: routes.RegisterRoutes(authClient, jwtSecret),
 	}
 
 	go func() {

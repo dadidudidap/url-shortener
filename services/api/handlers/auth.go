@@ -3,63 +3,93 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
-	"github.com/dadidudidap/url-shortener/shared/database"
-	"github.com/dadidudidap/url-shortener/shared/database/db"
-	"golang.org/x/crypto/bcrypt"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"github.com/dadidudidap/url-shortener/services/api/middleware"
+	"github.com/dadidudidap/url-shortener/shared/pb"
 )
 
-type RegisterRequest struct {
+type credentials struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 }
 
-type UserResponse struct {
-	ID        int32  `json:"id"`
-	Email     string `json:"email"`
-	CreatedAt string `json:"created_at"`
+type userPayload struct {
+	ID    int32  `json:"id"`
+	Email string `json:"email"`
 }
 
-func RegisterHandler(w http.ResponseWriter, r *http.Request) {
-	var req RegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
-		return
-	}
+func writeJSON(w http.ResponseWriter, code int, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(body)
+}
 
-	email := strings.TrimSpace(strings.ToLower(req.Email))
-	if email == "" || len(req.Password) < 6 {
-		http.Error(w, "Email required & password must be at least 6 characters", http.StatusBadRequest)
-		return
-	}
-
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		http.Error(w, "Failed to process password", http.StatusInternalServerError)
-		return
-	}
-
-	queries := db.New(database.Pool)
-	user, err := queries.CreateUser(r.Context(), db.CreateUserParams{
-		Email:        email,
-		PasswordHash: string(hashedPassword),
-	})
-
-	if err != nil {
-		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique constraint") {
-			http.Error(w, "Email is already registered", http.StatusConflict)
+// RegisterHandler proxies account creation to the auth service.
+func RegisterHandler(client pb.AuthServiceClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req credentials
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 			return
 		}
-		http.Error(w, "Failed to create user account", http.StatusInternalServerError)
-		return
-	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(UserResponse{
-		ID:        user.ID,
-		Email:     user.Email,
-		CreatedAt: user.CreatedAt.Time.String(),
-	})
+		user, err := client.Register(r.Context(), &pb.RegisterRequest{
+			Email:    req.Email,
+			Password: req.Password,
+		})
+		if err != nil {
+			switch status.Code(err) {
+			case codes.AlreadyExists:
+				http.Error(w, "Email is already registered", http.StatusConflict)
+			case codes.InvalidArgument:
+				http.Error(w, status.Convert(err).Message(), http.StatusBadRequest)
+			default:
+				http.Error(w, "Auth service unavailable", http.StatusBadGateway)
+			}
+			return
+		}
+
+		writeJSON(w, http.StatusCreated, userPayload{ID: user.GetId(), Email: user.GetEmail()})
+	}
+}
+
+// LoginHandler exchanges credentials for a bearer token.
+func LoginHandler(client pb.AuthServiceClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req credentials
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+			return
+		}
+
+		resp, err := client.Login(r.Context(), &pb.LoginRequest{
+			Email:    req.Email,
+			Password: req.Password,
+		})
+		if err != nil {
+			switch status.Code(err) {
+			case codes.Unauthenticated:
+				http.Error(w, "Invalid email or password", http.StatusUnauthorized)
+			case codes.InvalidArgument:
+				http.Error(w, status.Convert(err).Message(), http.StatusBadRequest)
+			default:
+				http.Error(w, "Auth service unavailable", http.StatusBadGateway)
+			}
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"token": resp.GetToken(),
+			"user":  userPayload{ID: resp.GetUser().GetId(), Email: resp.GetUser().GetEmail()},
+		})
+	}
+}
+
+// UserHandler answers a request already validated by middleware.Auth.
+func UserHandler(w http.ResponseWriter, r *http.Request) {
+	id, _ := middleware.UserID(r.Context())
+	writeJSON(w, http.StatusOK, map[string]int32{"id": id})
 }

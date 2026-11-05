@@ -2,17 +2,45 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/dadidudidap/url-shortener/shared/database"
 	"github.com/dadidudidap/url-shortener/shared/database/db" // sqlc generated package
 )
 
-const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+const (
+	charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+	// Short codes are 6 chars of 62, so a collision retry almost never fires.
+	maxCodeAttempts = 5
+)
+
+var errCodeExhausted = errors.New("short code space exhausted for this attempt")
+
+// createUniqueCode inserts until a generated code is free. insert reports rows
+// affected: 0 means another request took that code.
+func createUniqueCode(insert func(code string) (int64, error)) (string, error) {
+	for attempt := 0; attempt < maxCodeAttempts; attempt++ {
+		code := generateShortCode()
+
+		rows, err := insert(code)
+		if err != nil {
+			return "", err
+		}
+		if rows == 1 {
+			return code, nil
+		}
+	}
+	return "", errCodeExhausted
+}
 
 func generateShortCode() string {
 	b := make([]byte, 6)
@@ -31,21 +59,27 @@ func ShortenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortCode := generateShortCode()
-	queries := db.New(database.Pool)
-
 	longURL, ok := normalizeURL(req.LongURL)
 	if !ok {
 		http.Error(w, "Invalid URL", http.StatusBadRequest)
 		return
 	}
 
-	// sqlc generates CreateURLParams so you never pass the wrong types
-	err := queries.CreateURL(r.Context(), db.CreateURLParams{
-		ShortCode: shortCode,
-		LongUrl:   longURL,
+	queries := db.New(database.Pool)
+	shortCode, err := createUniqueCode(func(code string) (int64, error) {
+		_, err := queries.CreateURL(r.Context(), db.CreateURLParams{
+			ShortCode: code,
+			LongUrl:   longURL,
+			UserID:    pgtype.Int4{},
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, nil // code taken by a concurrent request
+		}
+		if err != nil {
+			return 0, err
+		}
+		return 1, nil
 	})
-
 	if err != nil {
 		log.Printf("Failed to create URL in database: %v\n", err)
 		http.Error(w, "Failed to create URL", http.StatusInternalServerError)

@@ -84,7 +84,7 @@ func main() {
 	}
 
 	go func() {
-		log.Println("Starting server on port " + port)
+		log.Println("Starting server on port http://127.0.0.1:" + port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed to start: %v", err)
 		}

@@ -12,5 +12,13 @@ type Url struct {
 	ShortCode string
 	LongUrl   string
 	Clicks    int32
+	UserID    pgtype.Int4
 	CreatedAt pgtype.Timestamp
+}
+
+type User struct {
+	ID           int32
+	Email        string
+	PasswordHash string
+	CreatedAt    pgtype.Timestamp
 }

@@ -7,24 +7,58 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createURL = `-- name: CreateURL :execrows
-INSERT INTO urls (short_code, long_url) VALUES ($1, $2)
+const createURL = `-- name: CreateURL :one
+INSERT INTO urls (short_code, long_url, user_id) 
+VALUES ($1, $2, $3) 
 ON CONFLICT (short_code) DO NOTHING
+RETURNING short_code, long_url, clicks, user_id, created_at
 `
 
 type CreateURLParams struct {
 	ShortCode string
 	LongUrl   string
+	UserID    pgtype.Int4
 }
 
-func (q *Queries) CreateURL(ctx context.Context, arg CreateURLParams) (int64, error) {
-	result, err := q.db.Exec(ctx, createURL, arg.ShortCode, arg.LongUrl)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+func (q *Queries) CreateURL(ctx context.Context, arg CreateURLParams) (Url, error) {
+	row := q.db.QueryRow(ctx, createURL, arg.ShortCode, arg.LongUrl, arg.UserID)
+	var i Url
+	err := row.Scan(
+		&i.ShortCode,
+		&i.LongUrl,
+		&i.Clicks,
+		&i.UserID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createUser = `-- name: CreateUser :one
+INSERT INTO users (email, password_hash) 
+VALUES ($1, $2) 
+RETURNING id, email, created_at
+`
+
+type CreateUserParams struct {
+	Email        string
+	PasswordHash string
+}
+
+type CreateUserRow struct {
+	ID        int32
+	Email     string
+	CreatedAt pgtype.Timestamp
+}
+
+func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error) {
+	row := q.db.QueryRow(ctx, createUser, arg.Email, arg.PasswordHash)
+	var i CreateUserRow
+	err := row.Scan(&i.ID, &i.Email, &i.CreatedAt)
+	return i, err
 }
 
 const getURL = `-- name: GetURL :one
@@ -42,13 +76,77 @@ const getURLStats = `-- name: GetURLStats :one
 SELECT short_code, long_url, clicks, created_at FROM urls WHERE short_code = $1
 `
 
-func (q *Queries) GetURLStats(ctx context.Context, shortCode string) (Url, error) {
+type GetURLStatsRow struct {
+	ShortCode string
+	LongUrl   string
+	Clicks    int32
+	CreatedAt pgtype.Timestamp
+}
+
+func (q *Queries) GetURLStats(ctx context.Context, shortCode string) (GetURLStatsRow, error) {
 	row := q.db.QueryRow(ctx, getURLStats, shortCode)
-	var i Url
+	var i GetURLStatsRow
 	err := row.Scan(
 		&i.ShortCode,
 		&i.LongUrl,
 		&i.Clicks,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getURLsByUser = `-- name: GetURLsByUser :many
+SELECT short_code, long_url, clicks, created_at 
+FROM urls 
+WHERE user_id = $1 
+ORDER BY created_at DESC
+`
+
+type GetURLsByUserRow struct {
+	ShortCode string
+	LongUrl   string
+	Clicks    int32
+	CreatedAt pgtype.Timestamp
+}
+
+func (q *Queries) GetURLsByUser(ctx context.Context, userID pgtype.Int4) ([]GetURLsByUserRow, error) {
+	rows, err := q.db.Query(ctx, getURLsByUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetURLsByUserRow
+	for rows.Next() {
+		var i GetURLsByUserRow
+		if err := rows.Scan(
+			&i.ShortCode,
+			&i.LongUrl,
+			&i.Clicks,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getUserByEmail = `-- name: GetUserByEmail :one
+SELECT id, email, password_hash, created_at 
+FROM users 
+WHERE email = $1
+`
+
+func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByEmail, email)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
 		&i.CreatedAt,
 	)
 	return i, err

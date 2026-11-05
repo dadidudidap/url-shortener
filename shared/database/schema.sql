@@ -14,3 +14,6 @@ CREATE TABLE IF NOT EXISTS urls (
 );
 
 CREATE INDEX IF NOT EXISTS idx_urls_user_id_created ON urls(user_id, created_at DESC);
+-- Volumes created before accounts existed need this applied once; the init
+-- script only runs on an empty data directory.
+ALTER TABLE urls ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;

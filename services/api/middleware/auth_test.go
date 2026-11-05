@@ -135,3 +135,54 @@ func TestOptionalAuthRejectsBadToken(t *testing.T) {
 		t.Errorf("status = %d, want 401", rec.Code)
 	}
 }
+
+func TestOptionalAuthRejectsEmptyBearer(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("next handler ran with an empty bearer token")
+	})
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer ")
+
+	rec := serve(OptionalAuth(testSecret)(next), req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestAuthAcceptsLowercaseScheme(t *testing.T) {
+	raw, err := token.Sign(testSecret, token.Claims{UserID: 5}, time.Hour)
+	if err != nil {
+		t.Fatalf("Sign() error: %v", err)
+	}
+
+	var ran bool
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { ran = true })
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "bearer "+raw)
+
+	rec := serve(Auth(testSecret)(next), req)
+	if rec.Code != http.StatusOK || !ran {
+		t.Errorf("status = %d, ran = %v; want 200", rec.Code, ran)
+	}
+}
+
+func TestOptionalAuthRejectsExpiredToken(t *testing.T) {
+	raw, err := token.Sign(testSecret, token.Claims{UserID: 1}, -time.Minute)
+	if err != nil {
+		t.Fatalf("Sign() error: %v", err)
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("next handler ran with an expired token")
+	})
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer "+raw)
+
+	rec := serve(OptionalAuth(testSecret)(next), req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}

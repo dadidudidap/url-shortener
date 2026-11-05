@@ -6,19 +6,34 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/dadidudidap/url-shortener/shared/database"
 	"github.com/dadidudidap/url-shortener/shared/pb"
 	"github.com/dadidudidap/url-shortener/shared/token"
 )
 
 const testSecret = "test-secret"
+
+// TestMain points the rate limiter at a dead address so it fails open instead
+// of panicking on a nil client. The 429 path needs a live Redis, so it is
+// covered by the end-to-end run, not here.
+func TestMain(m *testing.M) {
+	database.RedisClient = redis.NewClient(&redis.Options{
+		Addr:        "127.0.0.1:0",
+		DialTimeout: 50 * time.Millisecond,
+		MaxRetries:  -1,
+	})
+	os.Exit(m.Run())
+}
 
 func TestRootServesFrontend(t *testing.T) {
 	t.Chdir("../../..")

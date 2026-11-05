@@ -16,21 +16,28 @@ func UserID(ctx context.Context) (int32, bool) {
 	return id, ok
 }
 
-func bearerToken(r *http.Request) (string, bool) {
-	raw, found := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !found {
-		return "", false
+// tokenFromHeader splits "Bearer <token>". present reports whether the header
+// was sent at all, ok whether it carried a usable bearer token.
+func tokenFromHeader(r *http.Request) (raw string, present, ok bool) {
+	header := r.Header.Get("Authorization")
+	if header == "" {
+		return "", false, false
 	}
 
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", false
+	scheme, value, found := strings.Cut(header, " ")
+	if !found || !strings.EqualFold(scheme, "Bearer") {
+		return "", true, false
 	}
-	return raw, true
+
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", true, false
+	}
+	return value, true, true
 }
 
 func resolve(secret string, r *http.Request) (context.Context, bool) {
-	raw, ok := bearerToken(r)
+	raw, _, ok := tokenFromHeader(r)
 	if !ok {
 		return nil, false
 	}
@@ -60,8 +67,13 @@ func Auth(secret string) func(http.Handler) http.Handler {
 func OptionalAuth(secret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if _, ok := bearerToken(r); !ok {
+			_, present, ok := tokenFromHeader(r)
+			if !present {
 				next.ServeHTTP(w, r)
+				return
+			}
+			if !ok {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
 

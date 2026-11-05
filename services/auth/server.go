@@ -20,6 +20,10 @@ import (
 
 const minPasswordLength = 8
 
+// dummyPasswordHash keeps the unknown-email path as slow as a wrong password,
+// so response time does not reveal whether an account exists.
+var dummyPasswordHash, _ = bcrypt.GenerateFromPassword([]byte("not-a-real-password"), bcrypt.DefaultCost)
+
 type server struct {
 	pb.UnimplementedAuthServiceServer
 	queries *db.Queries
@@ -85,6 +89,7 @@ func (s *server) Login(ctx context.Context, req *pb.LoginRequest) (*pb.LoginResp
 
 	user, err := s.queries.GetUserByEmail(ctx, email)
 	if errors.Is(err, pgx.ErrNoRows) {
+		bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(req.GetPassword()))
 		return nil, invalid
 	}
 	if err != nil {

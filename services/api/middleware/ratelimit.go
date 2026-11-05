@@ -16,7 +16,8 @@ func RateLimit(next http.Handler) http.Handler {
 			ip = r.RemoteAddr
 		}
 
-		key := "rate_limit:" + ip
+		// Per endpoint: a burst of shortening must not lock the user out of login.
+		key := "rate_limit:" + ip + ":" + r.URL.Path
 		ctx := r.Context()
 
 		requests, err := database.RedisClient.Incr(ctx, key).Result()

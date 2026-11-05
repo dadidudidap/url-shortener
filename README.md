@@ -69,7 +69,13 @@ The Compose file starts the API, the click worker, Postgres, Redis, and RabbitMQ
 docker compose up --build
 ```
 
-Open <http://localhost:8000>. Postgres is published on host port 5433 and Redis on 6380 so they do not collide with local services. The schema is applied when the database volume is first created; after changing `shared/database/schema.sql`, run `docker compose down -v` and start again.
+Open <http://localhost:8000>. Postgres is published on host port 5433 and Redis on 6380 so they do not collide with local services. The schema is applied when the database volume is first created. After changing `shared/database/schema.sql`, apply it again without losing data:
+
+```bash
+docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < shared/database/schema.sql
+```
+
+Or run `docker compose down -v` and start again, which deletes every link.
 
 ## Configuration
 

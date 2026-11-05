@@ -6,8 +6,9 @@
 # Go build output
 /bin/
 /dist/
+url-shortener
+url-auth
 url-worker
-/url-shortener
 *.exe
 *.exe~
 *.dll

@@ -1,8 +1,18 @@
+x-infra-env: &infra-env
+  DB_HOST: postgres
+  DB_PORT: 5432
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  RABBITMQ_USER: ${RABBITMQ_USER:-app}
+  RABBITMQ_PASS: ${RABBITMQ_PASS:-app}
+  RABBITMQ_HOST: rabbitmq
+  RABBITMQ_PORT: 5672
+
 services:
   postgres:
     build:
       context: .
-      dockerfile: database/Dockerfile
+      dockerfile: shared/database/Dockerfile
     env_file: .env
     ports:
       - "5433:5432"
@@ -31,8 +41,8 @@ services:
       - "15672:15672"
     environment:
       # Local development credentials; change these for anything shared.
-      RABBITMQ_DEFAULT_USER: app
-      RABBITMQ_DEFAULT_PASS: app
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-app}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-app}
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:
@@ -41,16 +51,28 @@ services:
       timeout: 5s
       retries: 5
 
+  auth:
+    build:
+      context: .
+      dockerfile: services/auth/Dockerfile
+    env_file: .env
+    environment:
+      AUTH_GRPC_HOST: 0.0.0.0
+      AUTH_GRPC_PORT: 50051
+    ports:
+      - "50051:50051"
+
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
     env_file: .env
     ports:
       - "${PORT:-8000}:${PORT:-8000}"
     environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - REDIS_URL=redis:6379
-      - RABBITMQ_URL=amqp://app:app@rabbitmq:5672/
+      <<: *infra-env
+      AUTH_GRPC_HOST: auth
+      AUTH_GRPC_PORT: 50051
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,17 +80,15 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      auth:
+        condition: service_started
 
   worker:
     build:
       context: .
-      dockerfile: worker/Dockerfile
+      dockerfile: services/worker/Dockerfile
     env_file: .env
-    environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - REDIS_URL=redis:6379
-      - RABBITMQ_URL=amqp://app:app@rabbitmq:5672/
+    environment: *infra-env
     depends_on:
       postgres:
         condition: service_healthy

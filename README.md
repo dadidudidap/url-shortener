@@ -23,7 +23,7 @@ A small URL shortener written in Go. Short links redirect through Postgres, read
 - Docker Compose (optional, for the full stack)
 - [sqlc](https://sqlc.dev) only if you change the schema or queries
 
-The repository is a Go workspace (`go.work`) with two modules: the API at the root and the click worker in `worker/`.
+The repository is a Go workspace (`go.work`). The root module holds the API, the worker, and the shared packages; the auth service is a separate module in `services/auth/`.
 
 ## Setup
 
@@ -40,13 +40,13 @@ Start RabbitMQ only:
 docker compose up -d rabbitmq
 ```
 
-The management UI is at <http://localhost:15672> (`app` / `app`). If port 5672 is already in use, stop the existing broker or point `RABBITMQ_URL` at it.
+The management UI is at <http://localhost:15672> (`app` / `app`). If port 5672 is already in use, stop the existing broker or change `RABBITMQ_HOST`/`RABBITMQ_PORT`.
 
 Edit `.env` with your Postgres user, password, database, host, and port. The app builds the connection URL from them. Then create the database and apply the schema:
 
 ```bash
 createdb url_db
-psql "postgres://user:password@localhost:5432/url_db?sslmode=disable" -f database/schema.sql
+psql "postgres://user:password@localhost:5432/url_db?sslmode=disable" -f shared/database/schema.sql
 ```
 
 Run the API and the click worker in two terminals:
@@ -69,21 +69,29 @@ The Compose file starts the API, the click worker, Postgres, Redis, and RabbitMQ
 docker compose up --build
 ```
 
-Open <http://localhost:8000>. Postgres is published on host port 5433 and Redis on 6380 so they do not collide with local services. The schema is applied when the database volume is first created; after changing `database/schema.sql`, run `docker compose down -v` and start again.
+Open <http://localhost:8000>. Postgres is published on host port 5433 and Redis on 6380 so they do not collide with local services. The schema is applied when the database volume is first created; after changing `shared/database/schema.sql`, run `docker compose down -v` and start again.
 
 ## Configuration
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
 | `PORT` | no | `8000` | Must be numeric |
-| `DATABASE_URL` | no | built from the parts below | Full connection string; wins over the parts |
-| `POSTGRES_USER` | yes, unless `DATABASE_URL` is set | none | Postgres user |
-| `POSTGRES_PASSWORD` | yes, unless `DATABASE_URL` is set | none | Postgres password |
-| `POSTGRES_DB` | yes, unless `DATABASE_URL` is set | none | Postgres database name |
-| `DB_HOST` | yes, unless `DATABASE_URL` is set | none | Postgres host |
-| `DB_PORT` | yes, unless `DATABASE_URL` is set | none | Postgres port |
-| `REDIS_URL` | no | `localhost:6379` | Redis address as `host:port`, not a URL |
-| `RABBITMQ_URL` | no | `amqp://guest:guest@localhost:5672/` | AMQP URL; `.env.example` uses the Compose `app` user |
+| `POSTGRES_USER` | yes | none | Postgres user |
+| `POSTGRES_PASSWORD` | yes | none | Postgres password |
+| `POSTGRES_DB` | yes | none | Postgres database name |
+| `DB_HOST` | yes | none | Postgres host |
+| `DB_PORT` | yes | none | Postgres port. Compose publishes `5433` |
+| `REDIS_HOST` | no | `localhost` | Redis host |
+| `REDIS_PORT` | no | `6379` | Redis port. Compose publishes `6380` |
+| `RABBITMQ_USER` | no | `guest` | RabbitMQ user; `.env.example` uses the Compose `app` user |
+| `RABBITMQ_PASS` | no | `guest` | RabbitMQ password |
+| `RABBITMQ_HOST` | no | `localhost` | RabbitMQ host |
+| `RABBITMQ_PORT` | no | `5672` | RabbitMQ port |
+| `AUTH_GRPC_HOST` | no | `localhost`, `0.0.0.0` in the auth service | Auth gRPC host |
+| `AUTH_GRPC_PORT` | no | `50051` | Auth gRPC port |
+| `AUTH_API_KEY` | yes | none | Key the auth service accepts. Unset rejects every key |
+
+All connection strings are built from these parts. There are no URL variables.
 
 The app reads `.env` from the working directory when it exists. On a server, set the variables in the environment instead. The API and the worker read the same variables; the worker needs Postgres, Redis, and RabbitMQ.
 
@@ -161,16 +169,16 @@ The upgrade is accepted only when the `Origin` host matches the request `Host`. 
 ## Project layout
 
 ```
-main.go                 startup, HTTP server, graceful shutdown
-routes/routes.go        route wiring
-handlers/               shorten, redirect, stats, QR, live stats handler, click consumer used by the worker
-middleware/             Redis rate limiting
-ws/                     WebSocket hub: per-code fan-out, ping/pong, origin check, Redis listener
+services/api/           HTTP API: main.go, handlers, routes, middleware, WebSocket hub
+services/api/main.go    startup, HTTP server, graceful shutdown
+services/auth/          gRPC auth service, separate module (`go run ./services/auth`)
+services/worker/        click consumer, run with `go run ./services/worker`
+shared/database/        Postgres, Redis, and RabbitMQ setup, schema, queries
+shared/database/db/     sqlc-generated code, do not edit by hand
+shared/pb/              generated gRPC contracts (from shared/proto/auth.proto)
+shared/proto/           .proto sources
 src/                    index.html, styles.css, and app.js, served as static files
-worker/                 click consumer as a separate module, started with `go run ./worker`
-database/               Postgres, Redis, and RabbitMQ setup, schema, queries
-database/db/            sqlc-generated code, do not edit by hand
-go.work                 workspace tying the API and worker modules together
+go.work                 workspace tying the root module and the auth module together
 sqlc.yaml               sqlc configuration
 ```
 
@@ -179,24 +187,24 @@ sqlc.yaml               sqlc configuration
 ```bash
 go test ./...
 go vet ./...
-go build -o url-shortener .
+go build -o url-shortener ./services/api
 ```
 
-The root module covers the API; the worker is a separate module in the same workspace. Build it from the root with `go build ./worker`, or run its commands inside `worker/`.
+The API and worker are packages in the root module; the auth service is its own module. Build any of them from the repository root: `go build ./services/api`, `go build ./services/worker`, `go build ./services/auth`.
 
-The tests cover URL normalization, the QR route, the frontend route, and the WebSocket hub. The hub tests open real sockets through `httptest`, so run them with the race detector after touching `ws/`:
+The tests cover URL normalization, the QR route, the frontend route, and the WebSocket hub. The hub tests open real sockets through `httptest`, so run them with the race detector after touching `services/api/ws/`:
 
 ```bash
-go test -race ./ws
+go test -race ./services/api/ws
 ```
 
-The RabbitMQ integration test skips unless `RABBITMQ_URL` is set:
+The RabbitMQ integration test skips unless `RABBITMQ_TEST_URL` is set:
 
 ```bash
-RABBITMQ_URL=amqp://app:app@localhost:5672/ go test ./database
+RABBITMQ_TEST_URL=amqp://app:app@localhost:5672/ go test ./shared/database
 ```
 
-After editing `database/schema.sql` or `database/queries.sql`, regenerate the data layer:
+After editing `shared/database/schema.sql` or `shared/database/queries.sql`, regenerate the data layer:
 
 ```bash
 sqlc generate

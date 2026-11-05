@@ -1,34 +1,35 @@
 package main
 
 import (
-	"context"
 	"log"
 	"net"
 	"os"
+	"time"
 
-	// Import the generated protobuf code from your root module
-	"github.com/dadidudidap/url-shortener/shared/pb"
 	"google.golang.org/grpc"
+
+	"github.com/dadidudidap/url-shortener/shared/database"
+	"github.com/dadidudidap/url-shortener/shared/database/db"
+	"github.com/dadidudidap/url-shortener/shared/pb"
 )
 
-type server struct {
-	pb.UnimplementedAuthServiceServer
-}
-
-// ValidateToken implements the function defined in your .proto file
-func (s *server) ValidateToken(ctx context.Context, req *pb.TokenRequest) (*pb.TokenResponse, error) {
-	log.Printf("Received token validation request for API Key: %s", req.GetApiKey())
-
-	// Fail closed: an unset AUTH_API_KEY matches no key.
-	isValid := req.GetApiKey() != "" && req.GetApiKey() == os.Getenv("AUTH_API_KEY")
-
-	return &pb.TokenResponse{
-		IsValid: isValid,
-		UserId:  "user_999",
-	}, nil
-}
-
 func main() {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		log.Fatal("JWT_SECRET must be set")
+	}
+
+	ttl := 24 * time.Hour
+	if raw := os.Getenv("JWT_TTL"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			log.Fatalf("Invalid JWT_TTL: %v", err)
+		}
+		ttl = parsed
+	}
+
+	database.Init()
+
 	host := os.Getenv("AUTH_GRPC_HOST")
 	if host == "" {
 		host = "0.0.0.0"
@@ -45,7 +46,7 @@ func main() {
 	}
 
 	grpcServer := grpc.NewServer()
-	pb.RegisterAuthServiceServer(grpcServer, &server{})
+	pb.RegisterAuthServiceServer(grpcServer, newServer(db.New(database.Pool), secret, ttl))
 
 	log.Printf("Auth gRPC Microservice booting up on %s...", addr)
 	if err := grpcServer.Serve(lis); err != nil {

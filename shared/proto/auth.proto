@@ -1,23 +1,30 @@
-// We are using the latest syntax standard
 syntax = "proto3";
 
-// This tells the compiler to output the generated Go files into a folder named "pb"
-option go_package = "./pb";
+option go_package = "github.com/dadidudidap/url-shortener/shared/pb;pb";
 
 package auth;
 
-// The Service defines the "functions" you can call remotely
 service AuthService {
-  rpc ValidateToken (TokenRequest) returns (TokenResponse);
+  rpc Register (RegisterRequest) returns (UserResponse);
+  rpc Login    (LoginRequest)    returns (LoginResponse);
 }
 
-// Messages define the exact data structures (like Go structs)
-// The "= 1", "= 2" are unique binary tags used for serialization, NOT values!
-message TokenRequest {
-  string api_key = 1;
+message RegisterRequest {
+  string email    = 1;
+  string password = 2;
 }
 
-message TokenResponse {
-  bool is_valid = 1;
-  string user_id = 2;
+message LoginRequest {
+  string email    = 1;
+  string password = 2;
+}
+
+message UserResponse {
+  int32  id    = 1;
+  string email = 2;
+}
+
+message LoginResponse {
+  string       token = 1;
+  UserResponse user  = 2;
 }

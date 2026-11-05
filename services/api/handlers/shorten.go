@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/dadidudidap/url-shortener/services/api/middleware"
 	"github.com/dadidudidap/url-shortener/shared/database"
 	"github.com/dadidudidap/url-shortener/shared/database/db" // sqlc generated package
 )
@@ -50,6 +52,15 @@ func generateShortCode() string {
 	return string(b)
 }
 
+// ownerParam is NULL for anonymous requests and the user id otherwise.
+func ownerParam(ctx context.Context) pgtype.Int4 {
+	id, ok := middleware.UserID(ctx)
+	if !ok {
+		return pgtype.Int4{}
+	}
+	return pgtype.Int4{Int32: id, Valid: true}
+}
+
 func ShortenHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		LongURL string `json:"long_url"`
@@ -70,7 +81,7 @@ func ShortenHandler(w http.ResponseWriter, r *http.Request) {
 		_, err := queries.CreateURL(r.Context(), db.CreateURLParams{
 			ShortCode: code,
 			LongUrl:   longURL,
-			UserID:    pgtype.Int4{},
+			UserID:    ownerParam(r.Context()),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, nil // code taken by a concurrent request

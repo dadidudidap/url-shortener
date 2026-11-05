@@ -14,7 +14,7 @@ func RegisterRoutes(authClient pb.AuthServiceClient, jwtSecret string) *chi.Mux 
 	r := chi.NewRouter()
 
 	r.Route("/api", func(r chi.Router) {
-		r.With(middleware.RateLimit).Post("/shorten", handlers.ShortenHandler)
+		r.With(middleware.RateLimit, middleware.OptionalAuth(jwtSecret)).Post("/shorten", handlers.ShortenHandler)
 		r.Post("/register", handlers.RegisterHandler(authClient))
 		r.Post("/login", handlers.LoginHandler(authClient))
 		r.With(middleware.Auth(jwtSecret)).Get("/protected", handlers.UserHandler)

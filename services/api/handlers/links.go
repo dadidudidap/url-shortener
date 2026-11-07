@@ -14,10 +14,12 @@ import (
 )
 
 type linkPayload struct {
-	ShortCode string    `json:"short_code"`
-	LongURL   string    `json:"long_url"`
-	Clicks    int32     `json:"clicks"`
-	CreatedAt time.Time `json:"created_at"`
+	ShortCode string     `json:"short_code"`
+	LongURL   string     `json:"long_url"`
+	Clicks    int32      `json:"clicks"`
+	CreatedAt time.Time  `json:"created_at"`
+	ExpiresAt *time.Time `json:"expires_at"`
+	Expired   bool       `json:"expired"`
 }
 
 // ListLinksHandler returns links owned by the caller. The owner always comes
@@ -39,13 +41,17 @@ func ListLinksHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	now := time.Now()
 	links := make([]linkPayload, 0, len(rows))
 	for _, row := range rows {
+		expiresAt, expired := expiryPayload(row.ExpiresAt, now)
 		links = append(links, linkPayload{
 			ShortCode: row.ShortCode,
 			LongURL:   row.LongUrl,
 			Clicks:    row.Clicks,
 			CreatedAt: row.CreatedAt.Time,
+			ExpiresAt: expiresAt,
+			Expired:   expired,
 		})
 	}
 

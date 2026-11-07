@@ -40,3 +40,25 @@ func TestWSRequiresToken(t *testing.T) {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
 }
+
+func TestEditAndDeleteRequireToken(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+	}{
+		{name: "edit", method: http.MethodPut},
+		{name: "delete", method: http.MethodDelete},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(test.method, "/api/links/abc123", nil)
+			RegisterRoutes(fakeAuth{}, testSecret).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401", rec.Code)
+			}
+		})
+	}
+}

@@ -18,6 +18,8 @@ func RegisterRoutes(authClient pb.AuthServiceClient, jwtSecret string) *chi.Mux 
 		r.With(middleware.RateLimit).Post("/register", handlers.RegisterHandler(authClient))
 		r.With(middleware.RateLimit).Post("/login", handlers.LoginHandler(authClient))
 		r.With(middleware.Auth(jwtSecret)).Get("/links", handlers.ListLinksHandler)
+		r.With(middleware.Auth(jwtSecret)).Put("/links/{code}", handlers.UpdateLinkHandler)
+		r.With(middleware.Auth(jwtSecret)).Delete("/links/{code}", handlers.DeleteLinkHandler)
 		r.With(middleware.Auth(jwtSecret)).Get("/stats/{code}", handlers.GetStatsHandler)
 		r.Get("/qr/{code}", handlers.QRHandler)
 		r.Get("/ws/{code}", handlers.LiveStatsHandler(jwtSecret))

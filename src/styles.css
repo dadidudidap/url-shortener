@@ -389,6 +389,11 @@ h1 s {
   min-height: 0;
 }
 
+.result-expiry {
+  margin-top: 6px;
+  color: var(--info);
+}
+
 .qr-row {
   display: flex;
   align-items: center;

@@ -33,7 +33,7 @@
   <main>
     <section class="view" id="view-home" hidden>
       <div class="hero">
-        <h1><s>Long links</s><br>just <span class="accent">short</span></h1>
+        <h1><s>Long links</s><br><span class="accent">short</span> it.</h1>
         <p>Turn your absurdly long, messy links into something short and shareable.</p>
       </div>
 
@@ -56,8 +56,9 @@
           <div class="link-row">
             <a id="short-link" href="#" target="_blank" rel="noopener noreferrer"></a>
             <button type="button" class="ghost" id="copy-button">Copy</button>
-            <button type="button" class="ghost" id="stats-button">Stats</button>
+            <button type="button" class="ghost" id="stats-button" hidden>Stats</button>
           </div>
+          <p class="hint result-expiry" id="short-expiry" hidden></p>
           <p class="status" id="copy-status" role="status" aria-live="polite"></p>
           <div class="qr-row">
             <img id="short-qr" class="qr" width="112" height="112" alt="">

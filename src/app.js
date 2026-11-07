@@ -6,6 +6,7 @@
   var EMAIL_KEY = "email";
 
   var root = document.documentElement;
+  var sessionExpired = false;
   var session = readSession();
   var currentView = "";
   var pendingAuthMessage = "";
@@ -53,6 +54,7 @@
       result: byId("shorten-result"),
       shortLink: byId("short-link"),
       shortQr: byId("short-qr"),
+      shortExpiry: byId("short-expiry"),
       copyButton: byId("copy-button"),
       statsButton: byId("stats-button"),
       copyStatus: byId("copy-status"),
@@ -152,7 +154,16 @@
     var raw = window.location.hash.replace(/^#/, "");
     var parts = raw.split("/").filter(Boolean);
 
+    if (sessionExpired) {
+      pendingAuthMessage = "Session expired. Log in again.";
+      sessionExpired = false;
+    }
+
     if (parts[0] === "stats" && parts[1]) {
+      if (!session) {
+        window.location.hash = "#/";
+        return;
+      }
       showStats(decodeURIComponent(parts[1]));
       return;
     }
@@ -174,7 +185,7 @@
 
     if (parts[0] === "links") {
       if (!session) {
-        pendingAuthMessage = "Log in to see your links.";
+        pendingAuthMessage = pendingAuthMessage || "Log in to see your links.";
         window.location.hash = "#/account";
         return;
       }
@@ -183,6 +194,10 @@
       return;
     }
 
+    if (pendingAuthMessage) {
+      setStatus(elements.shortenStatus, pendingAuthMessage, true);
+      pendingAuthMessage = "";
+    }
     showView("home");
   }
 
@@ -254,11 +269,20 @@
       elements.shortLink.href = homeShortURL;
       elements.shortQr.src = "/api/qr/" + encodeURIComponent(code);
       elements.shortQr.alt = "QR code for " + code;
+      elements.statsButton.hidden = !session;
+      var expiry = expiryLabel(data.expires_at);
+      elements.shortExpiry.textContent = expiry;
+      elements.shortExpiry.hidden = !expiry;
       elements.result.hidden = false;
       setStatus(elements.shortenStatus, "", false);
       setStatus(elements.copyStatus, "", false);
       updateHeader();
     } catch (error) {
+      if (error.status === 401 && session) {
+        expireSession("Session expired. Log in again.");
+        setStatus(elements.shortenStatus, "Session expired. Log in again.", true);
+        return;
+      }
       setStatus(elements.shortenStatus, error.message, true);
     } finally {
       setFormLoading(elements.shortenForm, elements.shortenSubmit, false);
@@ -266,26 +290,14 @@
   }
 
   async function shortenLink(longURL) {
-    var token = session ? session.token : "";
     var headers = { "Content-Type": "application/json" };
-    if (token) headers.Authorization = "Bearer " + token;
+    if (session) headers.Authorization = "Bearer " + session.token;
 
-    try {
-      return await request("/api/shorten", {
-        method: "POST",
-        headers: headers,
-        body: JSON.stringify({ long_url: longURL }),
-      });
-    } catch (error) {
-      if (error.status !== 401 || !token) throw error;
-      clearSession();
-      updateHeader();
-      return request("/api/shorten", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ long_url: longURL }),
-      });
-    }
+    return request("/api/shorten", {
+      method: "POST",
+      headers: headers,
+      body: JSON.stringify({ long_url: longURL }),
+    });
   }
 
   async function onCopyHomeLink() {
@@ -317,7 +329,7 @@
     elements.statsCreated.textContent = "—";
     setStatus(elements.statsStatus, "Loading…", false);
 
-    request("/api/stats/" + encodeURIComponent(code))
+    authRequest("/api/stats/" + encodeURIComponent(code))
       .then(function (data) {
         if (statsCode !== code || currentView !== "stats") return;
         elements.statsUrl.textContent = displayURL(data.long_url);
@@ -330,7 +342,7 @@
         connectLive(code);
       })
       .catch(function (error) {
-        if (statsCode !== code || currentView !== "stats") return;
+        if (statsCode !== code || currentView !== "stats" || !session) return;
         setStatus(
           elements.statsStatus,
           error.status === 404 ? "No link found for that code." : error.message,
@@ -350,12 +362,13 @@
 
   function connectLive(code) {
     closeLive();
-    if (!("WebSocket" in window)) return;
+    if (!("WebSocket" in window) || !session) return;
 
     var protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     try {
       socket = new WebSocket(
-        protocol + "//" + window.location.host + "/api/ws/" + encodeURIComponent(code)
+        protocol + "//" + window.location.host + "/api/ws/" + encodeURIComponent(code),
+        ["bearer", session.token]
       );
     } catch (error) {
       socket = null;
@@ -470,7 +483,7 @@
   function expireSession(message) {
     clearSession();
     pendingAuthMessage = message || "";
-    if (currentView === "links") {
+    if (currentView === "links" || currentView === "stats") {
       window.location.hash = "#/account";
     } else {
       updateHeader();
@@ -493,14 +506,19 @@
     try {
       await shortenLink(longURL);
       if (!session) {
-        setStatus(elements.linksFormStatus, "Your session expired. Log in again.", true);
-        expireSession("Your session expired. Log in again.");
+        setStatus(elements.linksFormStatus, "Session expired. Log in again.", true);
+        expireSession("Session expired. Log in again.");
         return;
       }
       elements.linksInput.value = "";
       setStatus(elements.linksFormStatus, "Short link ready. It is first in the list below.", false);
       loadLinks();
     } catch (error) {
+      if (error.status === 401) {
+        setStatus(elements.linksFormStatus, "Session expired. Log in again.", true);
+        expireSession("Session expired. Log in again.");
+        return;
+      }
       setStatus(elements.linksFormStatus, error.message, true);
     } finally {
       setFormLoading(elements.linksForm, elements.linksSubmit, false);
@@ -512,17 +530,12 @@
     setStatus(elements.linksStatus, "Loading…", false);
 
     try {
-      var data = await request("/api/links", {
-        headers: { Authorization: "Bearer " + session.token },
-      });
+      var data = await authRequest("/api/links");
       if (currentView !== "links") return;
       renderLinks(data.links || []);
       setStatus(elements.linksStatus, "", false);
     } catch (error) {
-      if (error.status === 401) {
-        expireSession("Your session expired. Log in again.");
-        return;
-      }
+      if (error.status === 401) return;
       setStatus(elements.linksStatus, error.message, true);
     }
   }
@@ -634,6 +647,22 @@
     return "Request failed (" + status + ").";
   }
 
+  async function authRequest(url, options) {
+    if (!session) throw httpError("Session expired. Log in again.", 401);
+
+    var headers = Object.assign({}, (options && options.headers) || {}, {
+      Authorization: "Bearer " + session.token,
+    });
+    var requestOptions = Object.assign({}, options || {}, { headers: headers });
+
+    try {
+      return await request(url, requestOptions);
+    } catch (error) {
+      if (error.status === 401) expireSession("Session expired. Log in again.");
+      throw error;
+    }
+  }
+
   function httpError(message, status) {
     var error = new Error(message);
     error.status = status;
@@ -697,6 +726,16 @@
       month: "short",
       day: "numeric",
     }).format(date);
+  }
+
+  function expiryLabel(value) {
+    var date = new Date(value);
+    if (isNaN(date.getTime())) return "";
+
+    var remaining = date.getTime() - Date.now();
+    if (remaining <= 0) return "Expired";
+    var days = Math.ceil(remaining / 86400000);
+    return days === 1 ? "Expires in 1 day" : "Expires in " + days + " days";
   }
 
   function sentenceCase(text) {
@@ -772,11 +811,35 @@
     try {
       var token = localStorage.getItem(TOKEN_KEY);
       var email = localStorage.getItem(EMAIL_KEY);
-      if (token && email) return { token: token, email: email };
+      if (!token || !email) return null;
+
+      var expiresAt = tokenExpiry(token);
+      if (!expiresAt || expiresAt <= Date.now()) {
+        sessionExpired = true;
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(EMAIL_KEY);
+        return null;
+      }
+      return { token: token, email: email, expiresAt: expiresAt };
     } catch (error) {
       /* storage disabled */
     }
     return null;
+  }
+
+  function tokenExpiry(token) {
+    try {
+      var parts = token.split(".");
+      if (parts.length < 2 || !parts[1]) return 0;
+
+      var payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+      while (payload.length % 4) payload += "=";
+      var claims = JSON.parse(atob(payload));
+      var exp = Number(claims.exp);
+      return Number.isFinite(exp) && exp > 0 ? exp * 1000 : 0;
+    } catch (error) {
+      return 0;
+    }
   }
 
   function byId(id) {

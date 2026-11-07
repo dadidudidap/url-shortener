@@ -2,13 +2,10 @@ package handlers
 
 import (
 	"net/http"
-	"regexp"
 
 	"github.com/go-chi/chi/v5"
 	qrcode "github.com/skip2/go-qrcode"
 )
-
-var shortCodePattern = regexp.MustCompile(`^[A-Za-z0-9]{6}$`)
 
 // QRHandler returns a PNG QR code that points at the short link.
 func QRHandler(w http.ResponseWriter, r *http.Request) {

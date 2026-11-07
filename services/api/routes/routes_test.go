@@ -111,7 +111,7 @@ func TestQRRoute(t *testing.T) {
 
 func TestQRRouteRejectsBadCode(t *testing.T) {
 	rec := httptest.NewRecorder()
-	RegisterRoutes(nil, testSecret).ServeHTTP(rec, httptest.NewRequest("GET", "/api/qr/nope", nil))
+	RegisterRoutes(nil, testSecret).ServeHTTP(rec, httptest.NewRequest("GET", "/api/qr/bad.code", nil))
 
 	if rec.Code != 404 {
 		t.Errorf("status = %d, want 404", rec.Code)

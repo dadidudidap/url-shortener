@@ -102,6 +102,20 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  sweeper:
+    build:
+      context: .
+      dockerfile: services/sweeper/Dockerfile
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      SWEEP_INTERVAL: ${SWEEP_INTERVAL:-720h}
+      SWEEP_BATCH_SIZE: ${SWEEP_BATCH_SIZE:-1000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   pgdata:
   rabbitmq-data:

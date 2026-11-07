@@ -14,6 +14,7 @@ type Url struct {
 	Clicks    int32
 	UserID    pgtype.Int4
 	CreatedAt pgtype.Timestamp
+	ExpiresAt pgtype.Timestamptz
 }
 
 type User struct {

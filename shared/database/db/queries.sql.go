@@ -12,20 +12,26 @@ import (
 )
 
 const createURL = `-- name: CreateURL :one
-INSERT INTO urls (short_code, long_url, user_id) 
-VALUES ($1, $2, $3) 
+INSERT INTO urls (short_code, long_url, user_id, expires_at) 
+VALUES ($1, $2, $3, $4) 
 ON CONFLICT (short_code) DO NOTHING
-RETURNING short_code, long_url, clicks, user_id, created_at
+RETURNING short_code, long_url, clicks, user_id, created_at, expires_at
 `
 
 type CreateURLParams struct {
 	ShortCode string
 	LongUrl   string
 	UserID    pgtype.Int4
+	ExpiresAt pgtype.Timestamptz
 }
 
 func (q *Queries) CreateURL(ctx context.Context, arg CreateURLParams) (Url, error) {
-	row := q.db.QueryRow(ctx, createURL, arg.ShortCode, arg.LongUrl, arg.UserID)
+	row := q.db.QueryRow(ctx, createURL,
+		arg.ShortCode,
+		arg.LongUrl,
+		arg.UserID,
+		arg.ExpiresAt,
+	)
 	var i Url
 	err := row.Scan(
 		&i.ShortCode,
@@ -33,6 +39,7 @@ func (q *Queries) CreateURL(ctx context.Context, arg CreateURLParams) (Url, erro
 		&i.Clicks,
 		&i.UserID,
 		&i.CreatedAt,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -61,6 +68,63 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 	return i, err
 }
 
+const deleteExpiredGuestURL = `-- name: DeleteExpiredGuestURL :one
+DELETE FROM urls WHERE short_code = $1 AND user_id IS NULL RETURNING short_code
+`
+
+func (q *Queries) DeleteExpiredGuestURL(ctx context.Context, shortCode string) (string, error) {
+	row := q.db.QueryRow(ctx, deleteExpiredGuestURL, shortCode)
+	var short_code string
+	err := row.Scan(&short_code)
+	return short_code, err
+}
+
+const deleteExpiredGuestURLs = `-- name: DeleteExpiredGuestURLs :many
+DELETE FROM urls
+WHERE short_code IN (
+    SELECT short_code FROM urls
+    WHERE user_id IS NULL AND expires_at IS NOT NULL AND expires_at <= now()
+    LIMIT $1
+)
+RETURNING short_code
+`
+
+func (q *Queries) DeleteExpiredGuestURLs(ctx context.Context, limit int32) ([]string, error) {
+	rows, err := q.db.Query(ctx, deleteExpiredGuestURLs, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var short_code string
+		if err := rows.Scan(&short_code); err != nil {
+			return nil, err
+		}
+		items = append(items, short_code)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const deleteURL = `-- name: DeleteURL :one
+DELETE FROM urls WHERE short_code = $1 AND user_id = $2 RETURNING short_code
+`
+
+type DeleteURLParams struct {
+	ShortCode string
+	UserID    pgtype.Int4
+}
+
+func (q *Queries) DeleteURL(ctx context.Context, arg DeleteURLParams) (string, error) {
+	row := q.db.QueryRow(ctx, deleteURL, arg.ShortCode, arg.UserID)
+	var short_code string
+	err := row.Scan(&short_code)
+	return short_code, err
+}
+
 const getURL = `-- name: GetURL :one
 SELECT long_url FROM urls WHERE short_code = $1
 `
@@ -70,6 +134,56 @@ func (q *Queries) GetURL(ctx context.Context, shortCode string) (string, error) 
 	var long_url string
 	err := row.Scan(&long_url)
 	return long_url, err
+}
+
+const getURLForOwner = `-- name: GetURLForOwner :one
+SELECT short_code, long_url, clicks, user_id, created_at, expires_at
+FROM urls
+WHERE short_code = $1 AND user_id = $2
+`
+
+type GetURLForOwnerParams struct {
+	ShortCode string
+	UserID    pgtype.Int4
+}
+
+func (q *Queries) GetURLForOwner(ctx context.Context, arg GetURLForOwnerParams) (Url, error) {
+	row := q.db.QueryRow(ctx, getURLForOwner, arg.ShortCode, arg.UserID)
+	var i Url
+	err := row.Scan(
+		&i.ShortCode,
+		&i.LongUrl,
+		&i.Clicks,
+		&i.UserID,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const getURLForRedirect = `-- name: GetURLForRedirect :one
+SELECT short_code, long_url, user_id, expires_at
+FROM urls
+WHERE short_code = $1
+`
+
+type GetURLForRedirectRow struct {
+	ShortCode string
+	LongUrl   string
+	UserID    pgtype.Int4
+	ExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) GetURLForRedirect(ctx context.Context, shortCode string) (GetURLForRedirectRow, error) {
+	row := q.db.QueryRow(ctx, getURLForRedirect, shortCode)
+	var i GetURLForRedirectRow
+	err := row.Scan(
+		&i.ShortCode,
+		&i.LongUrl,
+		&i.UserID,
+		&i.ExpiresAt,
+	)
+	return i, err
 }
 
 const getURLStats = `-- name: GetURLStats :one
@@ -96,7 +210,7 @@ func (q *Queries) GetURLStats(ctx context.Context, shortCode string) (GetURLStat
 }
 
 const getURLsByUser = `-- name: GetURLsByUser :many
-SELECT short_code, long_url, clicks, created_at 
+SELECT short_code, long_url, clicks, created_at, expires_at
 FROM urls 
 WHERE user_id = $1 
 ORDER BY created_at DESC
@@ -107,6 +221,7 @@ type GetURLsByUserRow struct {
 	LongUrl   string
 	Clicks    int32
 	CreatedAt pgtype.Timestamp
+	ExpiresAt pgtype.Timestamptz
 }
 
 func (q *Queries) GetURLsByUser(ctx context.Context, userID pgtype.Int4) ([]GetURLsByUserRow, error) {
@@ -123,6 +238,7 @@ func (q *Queries) GetURLsByUser(ctx context.Context, userID pgtype.Int4) ([]GetU
 			&i.LongUrl,
 			&i.Clicks,
 			&i.CreatedAt,
+			&i.ExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -161,4 +277,36 @@ func (q *Queries) IncrementClicks(ctx context.Context, shortCode string) (int32,
 	var clicks int32
 	err := row.Scan(&clicks)
 	return clicks, err
+}
+
+const updateURL = `-- name: UpdateURL :one
+UPDATE urls SET short_code = $1, expires_at = $2
+WHERE short_code = $3 AND user_id = $4
+RETURNING short_code, long_url, clicks, user_id, created_at, expires_at
+`
+
+type UpdateURLParams struct {
+	ShortCode   string
+	ExpiresAt   pgtype.Timestamptz
+	ShortCode_2 string
+	UserID      pgtype.Int4
+}
+
+func (q *Queries) UpdateURL(ctx context.Context, arg UpdateURLParams) (Url, error) {
+	row := q.db.QueryRow(ctx, updateURL,
+		arg.ShortCode,
+		arg.ExpiresAt,
+		arg.ShortCode_2,
+		arg.UserID,
+	)
+	var i Url
+	err := row.Scan(
+		&i.ShortCode,
+		&i.LongUrl,
+		&i.Clicks,
+		&i.UserID,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
 }

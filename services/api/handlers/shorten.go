@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -77,11 +78,13 @@ func ShortenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	queries := db.New(database.Pool)
+	expiresAt := expiresAtDefault(time.Now())
 	shortCode, err := createUniqueCode(func(code string) (int64, error) {
 		_, err := queries.CreateURL(r.Context(), db.CreateURLParams{
 			ShortCode: code,
 			LongUrl:   longURL,
 			UserID:    ownerParam(r.Context()),
+			ExpiresAt: expiresAt,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, nil // code taken by a concurrent request
@@ -98,8 +101,9 @@ func ShortenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"short_url": baseURL(r) + "/" + shortCode,
+	json.NewEncoder(w).Encode(map[string]any{
+		"short_url":  baseURL(r) + "/" + shortCode,
+		"expires_at": expiresAt.Time,
 	})
 }
 

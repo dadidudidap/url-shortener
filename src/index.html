@@ -76,7 +76,10 @@
 
       <div class="short-card">
         <a id="stats-link" class="mono-link" href="#" target="_blank" rel="noopener noreferrer"></a>
-        <button type="button" class="ghost" id="stats-copy">Copy</button>
+        <div class="short-card-actions">
+          <button type="button" class="ghost" id="stats-edit" hidden>Edit</button>
+          <button type="button" class="ghost" id="stats-copy">Copy</button>
+        </div>
       </div>
 
       <div class="stats-grid">
@@ -93,12 +96,44 @@
             <dt>Created</dt>
             <dd id="stats-created"></dd>
           </div>
+          <div>
+            <dt>Expires</dt>
+            <dd id="stats-expires"></dd>
+          </div>
         </dl>
         <div class="qr-panel">
           <img id="stats-qr" class="qr" width="112" height="112" alt="">
           <p class="hint center">scan to open</p>
         </div>
       </div>
+
+      <section class="edit-panel" id="edit-panel" hidden aria-labelledby="edit-title">
+        <h2 id="edit-title">Edit link</h2>
+        <form id="edit-form" novalidate>
+          <label for="edit-code">Short code</label>
+          <input id="edit-code" name="short_code" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+
+          <label for="edit-expires">Expires at</label>
+          <input id="edit-expires" name="expires_at" type="datetime-local">
+
+          <label class="check-row" for="edit-lifetime">
+            <input id="edit-lifetime" name="lifetime" type="checkbox">
+            <span>Lifetime link</span>
+          </label>
+
+          <p class="hint">Leave the date empty for 3 days from now. Lifetime ignores the date.</p>
+
+          <div class="edit-actions">
+            <button type="submit" class="action" id="edit-save">
+              <span>Save</span>
+              <span class="spinner" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="ghost" id="edit-cancel">Cancel</button>
+            <button type="button" class="ghost danger" id="edit-delete">Delete</button>
+          </div>
+          <p class="status" id="edit-status" role="status" aria-live="polite"></p>
+        </form>
+      </section>
 
       <p class="hint">Clicks update live while the page stays open.</p>
       <p class="status" id="stats-status" role="status" aria-live="polite"></p>

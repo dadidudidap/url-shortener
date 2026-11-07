@@ -450,6 +450,12 @@ h1 s {
   flex: none;
 }
 
+.short-card-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 112px;
@@ -513,6 +519,67 @@ h1 s {
 #view-stats > .hint {
   margin-top: 16px;
   color: var(--info);
+}
+
+.stats dd.is-expired {
+  color: var(--danger);
+}
+
+.edit-panel {
+  margin-top: 16px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.edit-panel h2 {
+  margin: 0 0 16px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.edit-panel label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.edit-panel > form > label:not(.check-row),
+.edit-panel > form > input {
+  margin-bottom: 16px;
+}
+
+.edit-panel .check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 0;
+  font-weight: 400;
+}
+
+.edit-panel .check-row input {
+  width: auto;
+  min-height: 0;
+  margin: 0;
+}
+
+.edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.edit-actions .action {
+  min-width: 120px;
+}
+
+.ghost.danger {
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 /* Account */
@@ -659,6 +726,10 @@ h1 s {
   margin: 2px 0 0;
   color: var(--muted);
   font-size: 13px;
+}
+
+.link-expiry.is-expired {
+  color: var(--danger);
 }
 
 .link-actions {

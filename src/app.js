@@ -14,6 +14,7 @@
   var homeCode = "";
   var homeShortURL = "";
   var statsCode = "";
+  var statsLinkData = null;
   var socket = null;
   var elements = {};
 
@@ -60,11 +61,22 @@
       copyStatus: byId("copy-status"),
       statsLink: byId("stats-link"),
       statsCopy: byId("stats-copy"),
+      statsEdit: byId("stats-edit"),
       statsUrl: byId("stats-url"),
       statsClicks: byId("stats-clicks"),
       statsCreated: byId("stats-created"),
+      statsExpires: byId("stats-expires"),
       statsQr: byId("stats-qr"),
       statsStatus: byId("stats-status"),
+      editPanel: byId("edit-panel"),
+      editForm: byId("edit-form"),
+      editCode: byId("edit-code"),
+      editExpires: byId("edit-expires"),
+      editLifetime: byId("edit-lifetime"),
+      editSave: byId("edit-save"),
+      editCancel: byId("edit-cancel"),
+      editDelete: byId("edit-delete"),
+      editStatus: byId("edit-status"),
       loginTab: byId("login-tab"),
       registerTab: byId("register-tab"),
       authForm: byId("auth-form"),
@@ -91,6 +103,11 @@
     });
 
     elements.statsCopy.addEventListener("click", onCopyStatsLink);
+    elements.statsEdit.addEventListener("click", openEdit);
+    elements.editForm.addEventListener("submit", onEditSubmit);
+    elements.editCancel.addEventListener("click", closeEdit);
+    elements.editDelete.addEventListener("click", onEditDelete);
+    elements.editLifetime.addEventListener("change", syncLifetime);
 
     elements.loginTab.addEventListener("click", function () {
       setAuthMode("login");
@@ -315,6 +332,7 @@
 
   function showStats(code) {
     statsCode = code;
+    statsLinkData = null;
     showView("stats");
 
     elements.statsLink.textContent = shortLinkLabel(code);
@@ -327,6 +345,10 @@
     elements.statsUrl.removeAttribute("rel");
     elements.statsClicks.textContent = "—";
     elements.statsCreated.textContent = "—";
+    elements.statsExpires.textContent = "—";
+    elements.statsExpires.classList.remove("is-expired");
+    elements.statsEdit.hidden = true;
+    elements.editPanel.hidden = true;
     setStatus(elements.statsStatus, "Loading…", false);
 
     authRequest("/api/stats/" + encodeURIComponent(code))
@@ -338,6 +360,10 @@
         elements.statsUrl.rel = "noopener noreferrer";
         elements.statsClicks.textContent = String(data.clicks);
         elements.statsCreated.textContent = formatDate(data.created_at);
+        elements.statsExpires.textContent = expiryText(data.expires_at, data.expired);
+        elements.statsExpires.classList.toggle("is-expired", Boolean(data.expired));
+        statsLinkData = data;
+        elements.statsEdit.hidden = false;
         setStatus(elements.statsStatus, "", false);
         connectLive(code);
       })
@@ -357,6 +383,103 @@
     flashLabel(elements.statsCopy, ok ? "Copied" : "Copy failed");
     if (!ok) {
       setStatus(elements.statsStatus, "Copy failed. Select the link and copy it manually.", true);
+    }
+  }
+
+  function openEdit() {
+    if (!statsLinkData) return;
+
+    elements.editCode.value = statsLinkData.short_code || statsCode;
+    elements.editExpires.value = statsLinkData.expires_at
+      ? toLocalDatetime(statsLinkData.expires_at)
+      : "";
+    elements.editLifetime.checked = !statsLinkData.expires_at;
+    syncLifetime();
+    setStatus(elements.editStatus, "", false);
+    elements.editPanel.hidden = false;
+    elements.editCode.focus();
+  }
+
+  function closeEdit() {
+    elements.editPanel.hidden = true;
+    setStatus(elements.editStatus, "", false);
+  }
+
+  function syncLifetime() {
+    elements.editExpires.disabled = elements.editLifetime.checked;
+  }
+
+  async function onEditSubmit(event) {
+    event.preventDefault();
+    if (!statsLinkData) return;
+
+    var oldCode = statsCode;
+    var code = elements.editCode.value.trim();
+    var lifetime = elements.editLifetime.checked;
+    var expiresAt = "";
+
+    if (!code) {
+      setStatus(elements.editStatus, "Enter a short code.", true);
+      return;
+    }
+    if (!lifetime && elements.editExpires.value) {
+      expiresAt = fromLocalDatetime(elements.editExpires.value);
+      if (!expiresAt) {
+        setStatus(elements.editStatus, "Enter a valid expiry date and time.", true);
+        return;
+      }
+    }
+
+    setFormLoading(elements.editForm, elements.editSave, true);
+    setStatus(elements.editStatus, "Saving…", false);
+
+    try {
+      var data = await authRequest("/api/links/" + encodeURIComponent(oldCode), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          short_code: code,
+          expires_at: expiresAt,
+          lifetime: lifetime,
+        }),
+      });
+      if (currentView !== "stats" || statsCode !== oldCode) return;
+
+      elements.editPanel.hidden = true;
+      if (data && data.short_code && data.short_code !== oldCode) {
+        window.location.hash = "#/stats/" + encodeURIComponent(data.short_code);
+      } else {
+        showStats(oldCode);
+      }
+    } catch (error) {
+      if (error.status === 401) return;
+      setStatus(
+        elements.editStatus,
+        error.status === 409 ? "That short code is already taken." : error.message,
+        true
+      );
+    } finally {
+      setFormLoading(elements.editForm, elements.editSave, false);
+    }
+  }
+
+  async function onEditDelete() {
+    if (!statsLinkData) return;
+    if (!window.confirm("Delete this link permanently?")) return;
+
+    var code = statsCode;
+    elements.editDelete.disabled = true;
+    setStatus(elements.editStatus, "Deleting…", false);
+
+    try {
+      await authRequest("/api/links/" + encodeURIComponent(code), { method: "DELETE" });
+      if (currentView !== "stats" || statsCode !== code) return;
+      window.location.hash = "#/links";
+    } catch (error) {
+      if (error.status === 401) return;
+      setStatus(elements.editStatus, error.message, true);
+    } finally {
+      elements.editDelete.disabled = false;
     }
   }
 
@@ -569,8 +692,13 @@
 
       var meta = document.createElement("p");
       meta.className = "link-meta";
-      meta.textContent =
-        clickLabel(link.clicks) + " · " + formatDate(link.created_at);
+      meta.append(clickLabel(link.clicks) + " · " + formatDate(link.created_at) + " · ");
+
+      var expiry = document.createElement("span");
+      expiry.className = "link-expiry";
+      expiry.textContent = expiryText(link.expires_at, link.expired);
+      if (link.expired) expiry.classList.add("is-expired");
+      meta.append(expiry);
 
       main.append(shortLink, destination, meta);
 
@@ -726,6 +854,37 @@
       month: "short",
       day: "numeric",
     }).format(date);
+  }
+
+  function formatDateTime(value) {
+    var date = new Date(value);
+    if (isNaN(date.getTime())) return "—";
+    return new Intl.DateTimeFormat(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(date);
+  }
+
+  function expiryText(value, expired) {
+    if (!value) return "Lifetime";
+    if (expired) return "Expired";
+    return "Expires " + formatDateTime(value);
+  }
+
+  function toLocalDatetime(value) {
+    var date = new Date(value);
+    if (isNaN(date.getTime())) return "";
+    var local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+  }
+
+  function fromLocalDatetime(value) {
+    var date = new Date(value);
+    if (isNaN(date.getTime())) return "";
+    return date.toISOString();
   }
 
   function expiryLabel(value) {

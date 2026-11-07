@@ -109,6 +109,15 @@ func TestQRRoute(t *testing.T) {
 	}
 }
 
+func TestQRRouteAcceptsCustomCode(t *testing.T) {
+	rec := httptest.NewRecorder()
+	RegisterRoutes(nil, testSecret).ServeHTTP(rec, httptest.NewRequest("GET", "/api/qr/abc-123", nil))
+
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+}
+
 func TestQRRouteRejectsBadCode(t *testing.T) {
 	rec := httptest.NewRecorder()
 	RegisterRoutes(nil, testSecret).ServeHTTP(rec, httptest.NewRequest("GET", "/api/qr/bad.code", nil))

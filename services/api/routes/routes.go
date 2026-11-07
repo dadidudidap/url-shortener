@@ -22,9 +22,9 @@ func RegisterRoutes(authClient pb.AuthServiceClient, jwtSecret string) *chi.Mux 
 		r.Get("/qr/{code}", handlers.QRHandler)
 		r.Get("/ws/{code}", handlers.LiveStatsHandler)
 	})
-	// Only six-character codes reach the redirect handler, so asset paths
-	// such as /styles.css fall through to the static file server below.
-	r.Get("/{code:[A-Za-z0-9]{6}}", handlers.RedirectHandler)
+	// Asset paths such as /styles.css contain a dot and fall through to the
+	// static file server below.
+	r.Get("/{code:[A-Za-z0-9_-]{1,32}}", handlers.RedirectHandler)
 
 	staticHandler := http.FileServer(http.Dir("src"))
 	r.Handle("/*", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

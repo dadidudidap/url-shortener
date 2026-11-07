@@ -2,11 +2,13 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/dadidudidap/url-shortener/shared/database"
@@ -18,42 +20,94 @@ func RedirectHandler(w http.ResponseWriter, r *http.Request) {
 	queries := db.New(database.Pool)
 
 	redisCtx, cancelRedis := context.WithTimeout(r.Context(), 50*time.Millisecond)
-	defer cancelRedis() // Clean up the timer to prevent memory leaks
+	defer cancelRedis()
 	dbCtx, cancelDB := context.WithTimeout(r.Context(), 500*time.Millisecond)
 	defer cancelDB()
 
-	// sqlc automatically returns exactly one string for GetURL
-	// If the database is too slow, this aborts and returns a context.DeadlineExceeded error
-	longURL, redisErr := database.RedisClient.Get(redisCtx, shortCode).Result() //Try to fetch the long URL from Redis first
-
-	if redisErr != nil {
-		// Fetch long URL from Postgres if long URL not in Redis or some error occured
-		var dbErr error
-		longURL, dbErr = queries.GetURL(dbCtx, shortCode)
-		if dbErr != nil {
-			http.Error(w, "URL not found", http.StatusNotFound)
+	if target, ok := cachedRedirectTarget(redisCtx, shortCode); ok {
+		decision := decideRedirect(target, time.Now())
+		if decision.Active {
+			publishClick(shortCode)
+			http.Redirect(w, r, decision.LongURL, http.StatusFound)
 			return
 		}
-
-		// Check the error is cache miss or otherwise
-		if redisErr == redis.Nil {
-			// Cache miss
-			// Save longURL to Redis for future requests (e.g., cache for 24 hours)
-			setCtx, cancelSet := context.WithTimeout(context.Background(), 50*time.Millisecond)
-			defer cancelSet()
-
-			cacheErr := database.RedisClient.Set(setCtx, shortCode, longURL, 24*time.Hour).Err()
-			if cacheErr != nil {
-				log.Printf("Warning: Failed to cache URL %s: %v\n", shortCode, cacheErr)
+		if decision.DeleteGuest {
+			if _, err := queries.DeleteExpiredGuestURL(dbCtx, shortCode); err != nil {
+				log.Printf("Failed to delete expired guest link %s: %v\n", shortCode, err)
 			}
-		} else {
-			// Error, Redis is down or acting up
-			log.Printf("Redis error: %v\n", redisErr)
 		}
+		deleteCachedRedirect(shortCode)
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
 	}
 
-	// Queue the click; publish failures are logged and never block the redirect.
-	publishClick(shortCode)
+	row, err := queries.GetURLForRedirect(dbCtx, shortCode)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Redirect(w, r, "/", http.StatusFound)
+			return
+		}
+		http.Error(w, "Could not look up URL", http.StatusInternalServerError)
+		return
+	}
 
-	http.Redirect(w, r, longURL, http.StatusFound)
+	target := cachedRedirectFromRow(row)
+	decision := decideRedirect(target, time.Now())
+	if !decision.Active {
+		if decision.DeleteGuest {
+			if _, err := queries.DeleteExpiredGuestURL(dbCtx, shortCode); err != nil {
+				log.Printf("Failed to delete expired guest link %s: %v\n", shortCode, err)
+			}
+		}
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+
+	cacheRedirect(shortCode, target)
+	publishClick(shortCode)
+	http.Redirect(w, r, decision.LongURL, http.StatusFound)
+}
+
+func cachedRedirectTarget(ctx context.Context, shortCode string) (cachedRedirect, bool) {
+	raw, err := database.RedisClient.Get(ctx, shortCode).Result()
+	if err != nil {
+		if err != redis.Nil {
+			log.Printf("Redis error: %v\n", err)
+		}
+		return cachedRedirect{}, false
+	}
+
+	target, err := decodeRedirect([]byte(raw))
+	if err != nil {
+		deleteCachedRedirect(shortCode)
+		return cachedRedirect{}, false
+	}
+	return target, true
+}
+
+func cacheRedirect(shortCode string, target cachedRedirect) {
+	ttl := cacheTTL(target.ExpiresAt, time.Now())
+	if ttl <= 0 {
+		return
+	}
+
+	encoded, err := encodeRedirect(target)
+	if err != nil {
+		log.Printf("Failed to encode cached URL %s: %v\n", shortCode, err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := database.RedisClient.Set(ctx, shortCode, encoded, ttl).Err(); err != nil {
+		log.Printf("Failed to cache URL %s: %v\n", shortCode, err)
+	}
+}
+
+func deleteCachedRedirect(shortCode string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := database.RedisClient.Del(ctx, shortCode).Err(); err != nil {
+		log.Printf("Failed to delete cached URL %s: %v\n", shortCode, err)
+	}
 }

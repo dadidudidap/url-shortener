@@ -18,9 +18,9 @@ func RegisterRoutes(authClient pb.AuthServiceClient, jwtSecret string) *chi.Mux 
 		r.With(middleware.RateLimit).Post("/register", handlers.RegisterHandler(authClient))
 		r.With(middleware.RateLimit).Post("/login", handlers.LoginHandler(authClient))
 		r.With(middleware.Auth(jwtSecret)).Get("/links", handlers.ListLinksHandler)
-		r.Get("/stats/{code}", handlers.GetStatsHandler)
+		r.With(middleware.Auth(jwtSecret)).Get("/stats/{code}", handlers.GetStatsHandler)
 		r.Get("/qr/{code}", handlers.QRHandler)
-		r.Get("/ws/{code}", handlers.LiveStatsHandler)
+		r.Get("/ws/{code}", handlers.LiveStatsHandler(jwtSecret))
 	})
 	// Asset paths such as /styles.css contain a dot and fall through to the
 	// static file server below.

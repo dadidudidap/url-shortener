@@ -24,7 +24,8 @@ const (
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: sameOrigin,
+	CheckOrigin:  sameOrigin,
+	Subprotocols: []string{"bearer"},
 }
 
 // sameOrigin keeps other sites from opening sockets through a visitor's browser.
